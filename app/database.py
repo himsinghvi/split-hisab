@@ -1,15 +1,30 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+import os
+import tempfile
+from pathlib import Path
 
-from sqlalchemy import event
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-# v2 schema (users, orgs, events). Remove old expense_tracker.db if upgrading from legacy.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./app_data.db"
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
+def _default_database_url() -> str:
+    """Local dev uses a file in the project dir. Vercel serverless FS is read-only except /tmp."""
+    if os.environ.get("DATABASE_URL", "").strip():
+        return os.environ["DATABASE_URL"].strip()
+    if os.environ.get("VERCEL") == "1" or os.environ.get("VERCEL_ENV"):
+        tmp_db = Path(tempfile.gettempdir()) / "expense_tracker_app_data.db"
+        # Absolute path for SQLite (works on Linux/Vercel and Windows local tests).
+        abs_path = str(tmp_db.resolve()).replace("\\", "/")
+        return "sqlite:///" + abs_path
+
+
+# v2 schema (users, orgs, events). On Vercel, DB lives under /tmp unless DATABASE_URL is set (e.g. Neon).
+SQLALCHEMY_DATABASE_URL = _default_database_url()
+
+_engine_kwargs: dict = {"pool_pre_ping": True}
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL, **_engine_kwargs)
 
 
 @event.listens_for(engine, "connect")
@@ -18,6 +33,8 @@ def _set_sqlite_pragma(dbapi_conn, connection_record) -> None:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
