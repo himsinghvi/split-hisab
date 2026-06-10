@@ -15,13 +15,14 @@ def _default_database_url() -> str:
         # Absolute path for SQLite (works on Linux/Vercel and Windows local tests).
         abs_path = str(tmp_db.resolve()).replace("\\", "/")
         return "sqlite:///" + abs_path
+    return "sqlite:///./app_data.db"
 
 
 # v2 schema (users, orgs, events). On Vercel, DB lives under /tmp unless DATABASE_URL is set (e.g. Neon).
-SQLALCHEMY_DATABASE_URL = _default_database_url()
+SQLALCHEMY_DATABASE_URL = _default_database_url() or "sqlite:///./app_data.db"
 
 _engine_kwargs: dict = {"pool_pre_ping": True}
-if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+if (SQLALCHEMY_DATABASE_URL or "").startswith("sqlite"):
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL, **_engine_kwargs)
