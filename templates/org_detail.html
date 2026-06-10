@@ -12,8 +12,31 @@
 </nav>
 
 <header class="mb-4">
-  <h1 class="et-hero-title mb-2">{{ org.name }}</h1>
-  <p class="et-hero-lead mb-0">Invite members by mobile, then create events to track shared money for each occasion.</p>
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-2">
+    <div>
+      <h1 class="et-hero-title mb-2">{{ org.name }}</h1>
+      <p class="et-hero-lead mb-0">Invite members by mobile, then create events to track shared money for each occasion.</p>
+    </div>
+    {% if org.created_by_user_id == current_user_id %}
+    <div class="d-flex flex-wrap gap-2 align-items-start">
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#editOrgPanel" aria-expanded="false"><i class="bi bi-pencil me-1"></i>Edit name</button>
+      <form method="post" action="/orgs/{{ org.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this organization and all its events, members, and data? This cannot be undone.');">
+        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash3 me-1"></i>Delete org</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% if org.created_by_user_id == current_user_id %}
+  <div class="collapse mt-2" id="editOrgPanel">
+    <form method="post" action="/orgs/{{ org.id }}/edit" class="et-form-panel py-3" style="max-width: 28rem;">
+      <label class="form-label small fw-semibold" for="org_name_edit">Organization name</label>
+      <div class="input-group">
+        <input type="text" class="form-control" id="org_name_edit" name="name" value="{{ org.name }}" required maxlength="200">
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
 </header>
 
 {% if org_activities %}
@@ -46,11 +69,16 @@
 
   <ul class="list-group mb-4" style="max-width: 36rem;">
     {% for om in org.members %}
-    <li class="list-group-item d-flex justify-content-between align-items-center">
+    <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
       <div>
         <span class="fw-semibold">{{ om.user.full_name }}</span>
         <span class="small et-muted d-block">{{ om.user.mobile }}</span>
       </div>
+      {% if membership_remove_ok.get(om.id) %}
+      <form method="post" action="/orgs/{{ org.id }}/memberships/{{ om.id }}/remove#members" class="d-inline" onsubmit="return confirm('Remove this person from the organization?');">
+        <button type="submit" class="btn btn-outline-danger btn-sm">{% if om.user_id == current_user_id %}Leave{% else %}Remove{% endif %}</button>
+      </form>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>
@@ -77,10 +105,26 @@
   {% if events %}
   <div class="list-group mb-4">
     {% for ev in events %}
-    <a href="/events/{{ ev.id }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-3">
-      <span class="fw-semibold">{{ ev.name }}</span>
-      <i class="bi bi-chevron-right et-muted"></i>
-    </a>
+    <div class="list-group-item d-flex flex-wrap align-items-center justify-content-between gap-2 py-3">
+      <a href="/events/{{ ev.id }}" class="fw-semibold text-decoration-none text-reset flex-grow-1">{{ ev.name }}</a>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        {% if ev.created_by_user_id == current_user_id %}
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#editEv{{ ev.id }}"><i class="bi bi-pencil"></i></button>
+        <form method="post" action="/events/{{ ev.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this event and all pool entries, members, and expenses?');">
+          <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash3"></i></button>
+        </form>
+        {% endif %}
+        <a href="/events/{{ ev.id }}" class="btn btn-sm btn-outline-primary">Open</a>
+      </div>
+      {% if ev.created_by_user_id == current_user_id %}
+      <div class="collapse w-100" id="editEv{{ ev.id }}">
+        <form method="post" action="/events/{{ ev.id }}/edit" class="d-flex flex-wrap gap-2 mt-2 pt-2 border-top">
+          <input type="text" class="form-control form-control-sm" name="name" value="{{ ev.name }}" required maxlength="200" style="max-width: 16rem;">
+          <button type="submit" class="btn btn-sm btn-primary">Save name</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
     {% endfor %}
   </div>
   {% else %}

@@ -17,7 +17,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     org_memberships: Mapped[list["OrganizationMember"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user",
+        foreign_keys="OrganizationMember.user_id",
+        cascade="all, delete-orphan",
     )
     event_memberships: Mapped[list["Member"]] = relationship(
         back_populates="user", foreign_keys="Member.user_id"
@@ -43,6 +45,9 @@ class Organization(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     members: Mapped[list["OrganizationMember"]] = relationship(
@@ -61,13 +66,19 @@ class OrganizationMember(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     organization_id: Mapped[int] = mapped_column(
-        ForeignKey("organizations.id"), nullable=False
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     organization: Mapped["Organization"] = relationship(back_populates="members")
-    user: Mapped["User"] = relationship(back_populates="org_memberships")
+    user: Mapped["User"] = relationship(
+        back_populates="org_memberships", foreign_keys=[user_id]
+    )
 
 
 class Event(Base):
@@ -80,6 +91,9 @@ class Event(Base):
         ForeignKey("organizations.id"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     organization: Mapped["Organization"] = relationship(back_populates="events")
@@ -100,6 +114,9 @@ class Member(Base):
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     event: Mapped["Event"] = relationship(back_populates="members")
@@ -121,6 +138,9 @@ class Contribution(Base):
     member_id: Mapped[int] = mapped_column(ForeignKey("members.id"), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     member: Mapped["Member"] = relationship(back_populates="contributions")
@@ -135,6 +155,9 @@ class Expense(Base):
     category: Mapped[str] = mapped_column(String(100), nullable=False)
     amount_total: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     expense_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     event: Mapped["Event"] = relationship(back_populates="expenses")

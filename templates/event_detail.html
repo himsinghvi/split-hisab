@@ -27,8 +27,31 @@
 </nav>
 
 <header class="mb-4">
-  <h1 class="et-hero-title mb-2">{{ event.name }}</h1>
-  <p class="et-hero-lead mb-0">Pool contributions and per-person splits on every expense.</p>
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-2">
+    <div>
+      <h1 class="et-hero-title mb-2">{{ event.name }}</h1>
+      <p class="et-hero-lead mb-0">Pool contributions and per-person splits on every expense.</p>
+    </div>
+    {% if event.created_by_user_id == current_user_id %}
+    <div class="d-flex flex-wrap gap-2">
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#editEventPanel"><i class="bi bi-pencil me-1"></i>Edit name</button>
+      <form method="post" action="/events/{{ event.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this event and all data under it?');">
+        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash3 me-1"></i>Delete event</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% if event.created_by_user_id == current_user_id %}
+  <div class="collapse mt-2" id="editEventPanel">
+    <form method="post" action="/events/{{ event.id }}/edit" class="et-form-panel py-3" style="max-width: 28rem;">
+      <label class="form-label small fw-semibold" for="ev_name_edit">Event name</label>
+      <div class="input-group">
+        <input type="text" class="form-control" id="ev_name_edit" name="name" value="{{ event.name }}" required maxlength="200">
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
 </header>
 
 <div class="et-section-nav mb-4">
@@ -154,7 +177,7 @@
   <p class="small et-muted mb-4">Everyone who can appear on splits and contributions.</p>
 
   {% for m in members %}
-  <div class="et-member-row">
+  <div class="et-member-row flex-wrap">
     <div class="et-avatar">{{ member_initials(m.name) }}</div>
     <div class="flex-grow-1 min-w-0">
       <div class="fw-semibold text-truncate">{{ m.name }}</div>
@@ -163,6 +186,29 @@
         {% if m.user %} · Linked {{ m.user.mobile }}{% endif %}
       </div>
     </div>
+    {% if member_manage.get(m.id) %}
+    <div class="d-flex flex-wrap gap-2 ms-auto">
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#editMem{{ m.id }}">Edit</button>
+      <form method="post" action="/events/{{ event.id }}/members/{{ m.id }}/delete#members" class="d-inline" onsubmit="return confirm('Remove this member? They must have no contributions or expense splits.');">
+        <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+      </form>
+    </div>
+    <div class="collapse w-100 mt-2" id="editMem{{ m.id }}">
+      <form method="post" action="/events/{{ event.id }}/members/{{ m.id }}/edit#members" class="row g-2 align-items-end border-top pt-3">
+        <div class="col-md-5">
+          <label class="form-label small mb-0">Display name</label>
+          <input type="text" class="form-control form-control-sm" name="name" value="{{ m.name }}" maxlength="120">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small mb-0">Mobile (optional)</label>
+          <input type="tel" class="form-control form-control-sm" name="mobile" value="{{ m.user.mobile if m.user else '' }}" maxlength="20" placeholder="Registered mobile">
+        </div>
+        <div class="col-md-3">
+          <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+    {% endif %}
   </div>
   {% else %}
   <div class="et-empty mb-4">
@@ -195,7 +241,7 @@
   <div class="et-table-wrap mb-4">
     <div class="table-responsive">
       <table class="table table-hover align-middle">
-        <thead><tr><th>When</th><th>Member</th><th class="text-end">Amount</th><th>Note</th></tr></thead>
+        <thead><tr><th>When</th><th>Member</th><th class="text-end">Amount</th><th>Note</th><th class="text-end">Actions</th></tr></thead>
         <tbody>
           {% for c in contributions %}
           <tr>
@@ -203,7 +249,36 @@
             <td class="fw-medium">{{ c.member_name }}</td>
             <td class="text-end fw-bold text-money-positive">{{ c.amount | money }}</td>
             <td class="small et-muted">{{ c.note or '—' }}</td>
+            <td class="text-end text-nowrap">
+              {% if c.can_manage %}
+              <button type="button" class="btn btn-link btn-sm p-0 me-2" data-bs-toggle="collapse" data-bs-target="#editContrib{{ c.id }}">Edit</button>
+              <form method="post" action="/events/{{ event.id }}/contributions/{{ c.id }}/delete#pool" class="d-inline" onsubmit="return confirm('Delete this pool entry?');">
+                <button type="submit" class="btn btn-link btn-sm p-0 text-danger">Delete</button>
+              </form>
+              {% else %}
+              <span class="small et-muted">—</span>
+              {% endif %}
+            </td>
           </tr>
+          {% if c.can_manage %}
+          <tr class="collapse bg-light" id="editContrib{{ c.id }}">
+            <td colspan="5" class="py-3">
+              <form method="post" action="/events/{{ event.id }}/contributions/{{ c.id }}/edit#pool" class="row g-2 align-items-end">
+                <div class="col-auto">
+                  <label class="form-label small mb-0">Amount ₹</label>
+                  <input type="number" class="form-control form-control-sm" name="amount" value="{{ c.amount }}" min="0.01" step="0.01" required style="width: 7rem;">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small mb-0">Note</label>
+                  <input type="text" class="form-control form-control-sm" name="note" value="{{ c.note or '' }}" maxlength="200">
+                </div>
+                <div class="col-auto">
+                  <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                </div>
+              </form>
+            </td>
+          </tr>
+          {% endif %}
           {% endfor %}
         </tbody>
       </table>
@@ -292,6 +367,14 @@
             </li>
             {% endfor %}
           </ul>
+          {% if expense_manage.get(e.id) %}
+          <div class="d-flex flex-wrap gap-2 mt-3 pt-2 border-top">
+            <a href="/events/{{ event.id }}/expenses/{{ e.id }}/edit" class="btn btn-sm btn-outline-primary">Edit expense</a>
+            <form method="post" action="/events/{{ event.id }}/expenses/{{ e.id }}/delete#expenses" class="d-inline" onsubmit="return confirm('Delete this expense?');">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete expense</button>
+            </form>
+          </div>
+          {% endif %}
         </div>
       </div>
     </div>
