@@ -47,6 +47,7 @@ See **[ANDROID.md](ANDROID.md)** for opening the project in Android Studio, sett
 7. `GET/POST /api/v1/organizations/{id}/events` — list / create event (`POST` body `{ "name" }`).
 8. `GET /api/v1/events/{id}`, members, contributions, expenses, balances, `GET .../export.xlsx` — same behavior as the web UI, scoped to the authenticated user’s org membership.
 9. **Activity / notifications** — `GET /api/v1/me/activities` (flat list), `GET /api/v1/me/activities/grouped` (organization → event → items), `POST /api/v1/me/activities/{id}/read`, `POST /api/v1/me/activities/read-all`. Scoped feeds: `GET /api/v1/organizations/{id}/activities`, `GET /api/v1/events/{id}/activities` (only if you’re allowed to view that org/event). Each activity has `read_at` (null = unread).
+10. **Edit / delete (creator-only)** — `PATCH`/`DELETE` on `organizations/{id}`, `DELETE` on `organizations/{id}/memberships/{membershipId}` (inviter or self-leave), `PATCH`/`DELETE` on `events/{id}`, `PATCH`/`DELETE` on `events/{id}/members/{memberId}`, `PATCH`/`DELETE` on `events/{id}/contributions/{id}`, `PATCH`/`DELETE` on `events/{id}/expenses/{id}`. Responses use `204` for deletes. Only the user who **created** each record (or who invited an org member / added an event member / logged a contribution / created an expense) may change or remove it, except org self-leave rules on the web UI.
 
 ## Tech notes
 

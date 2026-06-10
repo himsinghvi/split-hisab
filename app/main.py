@@ -7,6 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import SESSION_SECRET
 from app.database import Base, engine
+from app.db_migrate import run_sqlite_migrations
 from app.middleware_unread import UnreadNotificationsMiddleware
 from app.models import (  # noqa: F401
     Activity,
@@ -24,6 +25,7 @@ from app.routers import auth as auth_router
 from app.routers import web as web_router
 
 Base.metadata.create_all(bind=engine)
+run_sqlite_migrations(engine)
 
 app = FastAPI(
     title="Group Expense Tracker",

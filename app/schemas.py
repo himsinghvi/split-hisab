@@ -16,8 +16,13 @@ class OrganizationCreate(BaseModel):
 class OrganizationRead(BaseModel):
     id: int
     name: str
+    created_by_user_id: int | None = None
 
     model_config = {"from_attributes": True}
+
+
+class OrganizationUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
 
 
 class EventCreate(BaseModel):
@@ -28,8 +33,13 @@ class EventRead(BaseModel):
     id: int
     organization_id: int
     name: str
+    created_by_user_id: int | None = None
 
     model_config = {"from_attributes": True}
+
+
+class EventUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
 
 
 class MemberCreate(BaseModel):
@@ -42,8 +52,14 @@ class MemberRead(BaseModel):
     event_id: int
     name: str
     user_id: Optional[int] = None
+    created_by_user_id: Optional[int] = None
 
     model_config = {"from_attributes": True}
+
+
+class MemberUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=120)
+    mobile: Optional[str] = None
 
 
 class ContributionCreate(BaseModel):
@@ -58,8 +74,14 @@ class ContributionRead(BaseModel):
     amount: Decimal
     note: Optional[str]
     created_at: str
+    created_by_user_id: Optional[int] = None
 
     model_config = {"from_attributes": True}
+
+
+class ContributionUpdate(BaseModel):
+    amount: Decimal = money_positive()
+    note: Optional[str] = None
 
 
 class ExpenseSplitInput(BaseModel):
@@ -99,6 +121,7 @@ class ExpenseRead(BaseModel):
     amount_total: Decimal
     expense_date: date
     splits: list[ExpenseSplitRead] = Field(default_factory=list)
+    created_by_user_id: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
