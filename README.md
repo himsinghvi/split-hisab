@@ -25,6 +25,10 @@ If you see **`Router.__init__() got an unexpected keyword argument 'on_startup'`
 
 Set **`SECRET_KEY`** (and optionally `SESSION_SECRET`, `JWT_SECRET`) in the environment for production.
 
+## Deploy on Vercel
+
+See **[VERCEL.md](VERCEL.md)**. Serverless filesystems are read-only except `/tmp`, so the app switches the default SQLite location on Vercel and documents required env vars and persistent databases.
+
 ## Web flow
 
 1. **Register** / **Sign in** with mobile + password.
