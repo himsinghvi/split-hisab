@@ -1,0 +1,865 @@
+{% extends "base.html" %}
+{% block title %}{{ event.name }}{% endblock %}
+
+{% macro member_initials(name) -%}
+{%- set t = (name or '') | trim -%}
+{%- set parts = t.split() -%}
+{%- if parts | length >= 2 -%}
+{{ (parts[0][0] ~ parts[-1][0]) | upper }}
+{%- elif t | length >= 2 -%}
+{{ t[:2] | upper }}
+{%- elif t | length == 1 -%}
+{{ t[0] | upper }}
+{%- else -%}
+?
+{%- endif -%}
+{% endmacro %}
+
+{% block page_heading %}{% endblock %}
+
+{% block content %}
+<nav class="et-breadcrumb mb-2" aria-label="breadcrumb">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="/orgs">Organizations</a></li>
+    <li class="breadcrumb-item"><a href="/orgs/{{ organization.id }}">{{ organization.name }}</a></li>
+    <li class="breadcrumb-item active text-truncate" style="max-width: 12rem;" aria-current="page">{{ event.name }}</li>
+  </ol>
+</nav>
+
+<header class="mb-3">
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-2">
+    <div class="min-w-0 flex-grow-1">
+      <h1 class="et-hero-title mb-1 text-break">{{ event.name }}</h1>
+      <p class="small et-muted mb-0">{{ organization.name }}</p>
+    </div>
+    {% if event.created_by_user_id == current_user_id %}
+    <div class="dropdown flex-shrink-0">
+      <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Event options">
+        <i class="bi bi-gear"></i><span class="d-none d-sm-inline ms-1">Manage</span>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end shadow">
+        <li>
+          <button type="button" class="dropdown-item" data-bs-toggle="collapse" data-bs-target="#editEventPanel" aria-expanded="false">
+            <i class="bi bi-pencil me-2"></i>Rename event
+          </button>
+        </li>
+        <li><hr class="dropdown-divider"></li>
+        <li>
+          <form method="post" action="/events/{{ event.id }}/delete" class="px-3 py-1" onsubmit="return confirm('Delete this event and all data under it?');">
+            <button type="submit" class="btn btn-link text-danger p-0 small text-decoration-none">
+              <i class="bi bi-trash3 me-2"></i>Delete event
+            </button>
+          </form>
+        </li>
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+  {% if event.created_by_user_id == current_user_id %}
+  <div class="collapse mt-2" id="editEventPanel">
+    <form method="post" action="/events/{{ event.id }}/edit" class="et-form-panel py-3" style="max-width: 28rem;">
+      <label class="form-label small fw-semibold" for="ev_name_edit">Event name</label>
+      <div class="input-group">
+        <input type="text" class="form-control" id="ev_name_edit" name="name" value="{{ event.name }}" required maxlength="200">
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+</header>
+
+<div class="et-section-nav mb-4">
+  <ul class="nav">
+    <li class="nav-item"><a class="nav-link" href="#balances"><i class="bi bi-pie-chart me-1"></i>This event</a></li>
+    <li class="nav-item"><a class="nav-link" href="/orgs/{{ organization.id }}#finances"><i class="bi bi-wallet2 me-1"></i>Org finances</a></li>
+    <li class="nav-item"><a class="nav-link" href="#members"><i class="bi bi-person-plus me-1"></i>Members</a></li>
+    <li class="nav-item"><a class="nav-link" href="#expenses"><i class="bi bi-receipt me-1"></i>Expenses</a></li>
+    <li class="nav-item"><a class="nav-link" href="#activity"><i class="bi bi-clock-history me-1"></i>Activity</a></li>
+  </ul>
+</div>
+
+<section class="mb-5 pb-1" id="balances">
+  {% if not members %}
+  <h2 class="h5 fw-bold mb-2">This event</h2>
+  <div class="alert alert-et-warn d-flex align-items-start gap-2 mb-0" role="alert">
+    <i class="bi bi-exclamation-triangle flex-shrink-0 mt-1"></i>
+    <div>Add at least one member before you can record expenses.</div>
+  </div>
+  {% else %}
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <div>
+      <h2 class="h5 fw-bold mb-0">This event</h2>
+      <p class="small et-muted mb-0">Expense shares on this event only · <a href="/orgs/{{ organization.id }}#finances">Organization finances</a> for settlements.</p>
+    </div>
+    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none" data-bs-toggle="modal" data-bs-target="#modalBalanceHelp">
+      <i class="bi bi-question-circle me-1"></i>How it works
+    </button>
+  </div>
+
+  <div class="et-card mb-3 border-primary border-opacity-25" style="border-width: 2px;">
+    <div class="et-card-body py-3">
+      <p class="et-eyebrow mb-2">This event</p>
+      <div class="text-center">
+        <div class="et-metric mb-0">
+          <span class="et-metric-label">Total expenditure</span>
+          <span class="et-metric-value et-metric-value--expended fs-4">{{ balance_totals.total_expenditure | money }}</span>
+          <span class="small et-muted d-block mt-1">Sum of bill totals on this event</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn btn-outline-secondary btn-sm w-100" type="button" data-bs-toggle="collapse" data-bs-target="#balancesPeople" aria-expanded="true" aria-controls="balancesPeople">
+    <i class="bi bi-people me-1"></i>Per-person ({{ balances | length }})
+  </button>
+  <div class="collapse show mt-3" id="balancesPeople">
+    <div class="row g-3">
+    {% for b in balances %}
+    <div class="col-md-6 col-xl-4">
+      <div class="et-card h-100">
+        <div class="et-card-body py-3">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="et-avatar">{{ member_initials(b.name) }}</div>
+            <h3 class="h6 fw-bold mb-0 text-truncate">{{ b.name }}</h3>
+          </div>
+          <div class="row g-2 text-center">
+            <div class="col-12">
+              <div class="et-metric">
+                <span class="et-metric-label">Share (this event)</span>
+                <span class="et-metric-value et-metric-value--expended small">{{ b.expended | money }}</span>
+              </div>
+            </div>
+          </div>
+          {% if b.user_id and org_balance_by_user_id.get(b.user_id) %}
+          {% set ob = org_balance_by_user_id[b.user_id] %}
+          <div class="rounded-3 border bg-light bg-opacity-50 px-2 py-2 mt-3 text-start small">
+            <div class="text-uppercase fw-semibold et-muted mb-1" style="font-size: 0.65rem; letter-spacing: 0.06em;">Org-wide (linked account)</div>
+            <div class="d-flex flex-wrap justify-content-between gap-1"><span class="et-muted">Shared purse</span><span class="font-monospace">{{ ob.manual_contributed | money }}</span></div>
+            <div class="d-flex flex-wrap justify-content-between gap-1"><span class="et-muted">Paid on bills</span><span class="font-monospace">{{ ob.expense_front_pool | money }}</span></div>
+            <div class="d-flex flex-wrap justify-content-between gap-1"><span class="et-muted">Your share</span><span class="font-monospace">{{ ob.expended | money }}</span></div>
+            <div class="d-flex flex-wrap justify-content-between gap-1 fw-semibold border-top pt-1 mt-1"><span>Settlement</span><span class="{% if ob.remaining >= 0 %}text-success{% else %}text-danger{% endif %} font-monospace">{{ ob.remaining | money }}</span></div>
+          </div>
+          {% elif b.user_id %}
+          <p class="small et-muted mb-0 mt-2 text-center">No org roster row — check org membership.</p>
+          {% else %}
+          <p class="small et-muted mb-0 mt-2 text-center">Link an account to see org-wide settlement on this card.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="mb-5" id="members">
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
+    <div>
+      <h2 class="h5 fw-bold mb-0">Members</h2>
+      <p class="small et-muted mb-0">{{ members | length }} on this event · expense splits</p>
+    </div>
+    <button type="button" class="btn btn-primary flex-shrink-0" data-bs-toggle="modal" data-bs-target="#modalAddMember">
+      <i class="bi bi-person-plus me-1"></i><span class="d-none d-sm-inline">Add member</span><span class="d-sm-none">Add</span>
+    </button>
+  </div>
+
+  {% if member_error %}
+  <div class="alert alert-danger alert-dismissible fade show d-flex align-items-start gap-2 mb-3" role="alert">
+    <i class="bi bi-exclamation-circle flex-shrink-0 mt-1"></i>
+    <div class="flex-grow-1">{{ member_error }}</div>
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Dismiss"></button>
+  </div>
+  {% endif %}
+
+  {% for m in members %}
+  <div class="et-member-row flex-wrap">
+    <div class="et-avatar">{{ member_initials(m.name) }}</div>
+    <div class="flex-grow-1 min-w-0">
+      <div class="fw-semibold text-truncate">{{ m.name }}</div>
+      <div class="small et-muted text-truncate">{% if m.user %}<i class="bi bi-phone me-1"></i>{{ m.user.mobile }}{% else %}No account linked{% endif %}</div>
+    </div>
+    {% if member_manage.get(m.id) %}
+    <div class="d-flex flex-wrap gap-2 ms-auto">
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#editMem{{ m.id }}">Edit</button>
+      <form method="post" action="/events/{{ event.id }}/members/{{ m.id }}/delete#members" class="d-inline" onsubmit="return confirm('Remove this member? They must have no expense splits on this event.');">
+        <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+      </form>
+    </div>
+    <div class="collapse w-100 mt-2" id="editMem{{ m.id }}">
+      <form method="post" action="/events/{{ event.id }}/members/{{ m.id }}/edit#members" class="row g-2 align-items-end border-top pt-3">
+        <div class="col-12 col-sm-5">
+          <label class="form-label small mb-0">Display name</label>
+          <input type="text" class="form-control form-control-sm" name="name" value="{{ m.name }}" maxlength="120">
+        </div>
+        <div class="col-12 col-sm-5">
+          <label class="form-label small mb-0">Mobile (optional)</label>
+          <input type="tel" class="form-control form-control-sm" name="mobile" value="{{ m.user.mobile if m.user else '' }}" maxlength="20" placeholder="Registered mobile">
+        </div>
+        <div class="col-12 col-sm-2">
+          <button type="submit" class="btn btn-sm btn-primary w-100 mt-3 mt-sm-4">Save</button>
+        </div>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="et-empty mb-3 py-4">
+    <div class="et-empty-icon"><i class="bi bi-people"></i></div>
+    <p class="et-muted mb-2">No members yet.</p>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalAddMember">Add the first member</button>
+  </div>
+  {% endfor %}
+</section>
+
+<div class="modal fade" id="modalAddMember" tabindex="-1" aria-labelledby="modalAddMemberLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title fs-5" id="modalAddMemberLabel">Add member</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="/events/{{ event.id }}/members" id="form-add-event-member" autocomplete="off">
+        <div class="modal-body">
+          {% if member_error %}
+          <div class="alert alert-danger py-2 small mb-3" role="alert">{{ member_error }}</div>
+          {% endif %}
+          <input type="hidden" name="from_org_user_id" id="om_from_org_user_id" value="">
+          <div id="om_client_error" class="alert alert-warning py-2 small d-none mb-3" role="alert"></div>
+          <label for="om_search" class="form-label fw-semibold">From organization</label>
+          <p class="small et-muted mb-2">Search by name or mobile digits. Use <strong>Add</strong> on a row for one tap, or tap the name then <strong>Add selected</strong>.</p>
+          <div class="position-relative mb-2">
+            <div class="input-group">
+              <span class="input-group-text bg-white border-end-0"><i class="bi bi-search et-muted"></i></span>
+              <input type="text" class="form-control border-start-0 ps-0" id="om_search" maxlength="80" placeholder="Name or digits…" autocomplete="off">
+            </div>
+            <ul id="om_suggestions" class="list-group position-absolute w-100 shadow rounded-bottom d-none mt-1 et-suggest-list" role="listbox" aria-label="Organization members"></ul>
+          </div>
+          <div class="d-grid d-sm-flex gap-2 mb-3">
+            <button type="button" class="btn btn-outline-primary order-sm-1" id="om_btn_add_selected" disabled>Add selected</button>
+            <button type="button" class="btn btn-outline-secondary order-sm-0" id="om_clear_pick" disabled>Clear</button>
+          </div>
+          <hr class="my-3">
+          <p class="small fw-semibold mb-2">Add manually</p>
+          <label for="member_name" class="form-label small">Display name</label>
+          <input type="text" class="form-control mb-2" id="member_name" name="name" maxlength="120" placeholder="Shown on splits (no account)">
+          <label for="member_mobile" class="form-label small">Registered mobile <span class="fw-normal et-muted">(optional)</span></label>
+          <input type="tel" class="form-control" id="member_mobile" name="mobile" maxlength="20" placeholder="Must match an existing account">
+          <p class="small et-muted mt-2 mb-0">If you used organization search above, these fields are ignored until you clear the selection.</p>
+        </div>
+        <div class="modal-footer flex-column flex-sm-row gap-2 border-top-0 pt-0">
+          <button type="button" class="btn btn-outline-secondary w-100 w-sm-auto me-sm-auto" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary w-100 w-sm-auto px-4"><i class="bi bi-plus-lg me-1"></i>Add member</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<section class="mb-5" id="expenses">
+  <div class="mb-3">
+    <h2 class="h5 fw-bold mb-1">Expenses</h2>
+    <p class="small et-muted mb-0">Tap a row for split detail.</p>
+  </div>
+  <div class="d-grid d-sm-flex gap-2 mb-3">
+    <a href="/events/{{ event.id }}/export.xlsx" class="btn btn-outline-secondary order-sm-0">
+      <i class="bi bi-file-earmark-spreadsheet me-1"></i><span class="d-none d-sm-inline">Excel </span>Report
+    </a>
+    {% if members %}
+    <button type="button" class="btn btn-primary order-sm-1" data-bs-toggle="modal" data-bs-target="#modalExpense">
+      <i class="bi bi-receipt-cutoff me-1"></i>Add expense
+    </button>
+    {% endif %}
+  </div>
+
+  {% if expenses %}
+  <div class="et-card p-0 overflow-hidden mb-4">
+    <div class="accordion accordion-flush" id="expenseAccordion">
+    {% for e in expenses %}
+    <div class="accordion-item border-bottom">
+      <h2 class="accordion-header">
+        <button class="accordion-button collapsed py-3 px-3 px-md-4 fw-medium shadow-none bg-white" type="button"
+                data-bs-toggle="collapse" data-bs-target="#ex-{{ e.id }}" aria-expanded="false">
+          <span class="d-flex flex-wrap align-items-center gap-2 gap-md-3 w-100 me-2">
+            <span class="badge rounded-pill text-bg-light border align-self-center">{{ e.expense_date }}</span>
+            <span class="flex-grow-1 text-start">{{ e.title }}</span>
+            <span class="et-badge-cat">{{ e.category }}</span>
+            <span class="fw-bold ms-md-auto">{{ e.amount_total | money }}</span>
+          </span>
+        </button>
+      </h2>
+      <div id="ex-{{ e.id }}" class="accordion-collapse collapse">
+        <div class="accordion-body pt-0 pb-3 px-3 px-md-4 bg-light bg-opacity-50">
+          <p class="small text-uppercase fw-semibold et-muted mb-2" style="letter-spacing: 0.06em;">Split</p>
+          <ul class="list-unstyled mb-0 row row-cols-1 row-cols-sm-2 g-2">
+            {% for s in e.splits %}
+            <li class="d-flex justify-content-between align-items-center rounded-3 border bg-white py-2 px-3 shadow-sm">
+              <span class="fw-medium"><i class="bi bi-person me-2 et-muted"></i>{{ s.member.name }}</span>
+              <span class="fw-semibold">{{ s.amount | money }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+          {% if expense_manage.get(e.id) %}
+          <div class="d-flex flex-wrap gap-2 mt-3 pt-2 border-top">
+            <a href="/events/{{ event.id }}/expenses/{{ e.id }}/edit" class="btn btn-sm btn-outline-primary">Edit expense</a>
+            <form method="post" action="/events/{{ event.id }}/expenses/{{ e.id }}/delete#expenses" class="d-inline" onsubmit="return confirm('Delete this expense?');">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete expense</button>
+            </form>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="et-empty mb-4">
+    <div class="et-empty-icon"><i class="bi bi-receipt"></i></div>
+    <p class="et-muted mb-3 small">No expenses yet.</p>
+    <div class="d-grid d-sm-flex gap-2 justify-content-center">
+      <a href="/events/{{ event.id }}/export.xlsx" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Excel report</a>
+      {% if members %}
+      <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalExpense">
+        <i class="bi bi-plus-lg me-1"></i>Add expense
+      </button>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+{% if event_activities %}
+<section class="mb-4 et-card overflow-hidden" id="activity">
+  <button type="button" class="btn btn-link text-decoration-none text-body w-100 py-3 px-3 d-flex align-items-center justify-content-between rounded-0 collapsed et-activity-toggle"
+          data-bs-toggle="collapse" data-bs-target="#activityCollapse" aria-expanded="false" aria-controls="activityCollapse">
+    <span class="fw-semibold"><i class="bi bi-clock-history me-2 text-secondary"></i>Activity</span>
+    <span class="d-flex align-items-center gap-2">
+      <span class="badge rounded-pill bg-secondary bg-opacity-10 text-secondary border">{{ event_activities | length }}</span>
+      <i class="bi bi-chevron-down et-collapse-chevron text-muted"></i>
+    </span>
+  </button>
+  <div id="activityCollapse" class="collapse">
+    <div class="border-top px-3 pb-3 pt-1">
+      <ul class="list-group list-group-flush">
+        {% for a in event_activities %}
+        <li class="list-group-item px-0 {% if not a.read_at %}bg-light bg-opacity-50{% endif %}">
+          <span class="small text-uppercase et-muted d-block mb-1" style="font-size: 0.68rem;">{{ a.kind | replace('_', ' ') }}</span>
+          <span class="small">{{ a.summary }}</span>
+          <span class="small et-muted d-block mt-1">{{ a.created_at.strftime('%b %d, %Y · %H:%M') }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="small et-muted mb-0 mt-2"><a href="/notifications">All notifications</a></p>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<div class="modal fade" id="modalBalanceHelp" tabindex="-1" aria-labelledby="modalBalanceHelpLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h2 class="modal-title fs-5" id="modalBalanceHelpLabel">This event vs organization</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <ul class="small mb-0 ps-3">
+          <li class="mb-2"><strong>This event</strong> shows total expenditure (sum of bills here) and each person’s share. Open <a href="/orgs/{{ organization.id }}#finances">organization finances</a> for purse, ledgers, and settlements.</li>
+          <li class="mb-2">Linked members see an <strong>org-wide</strong> snapshot on their card (purse, paid on bills, share, settlement).</li>
+          <li class="mb-0">Bill-front credits (who paid the card) are tracked on org finances, not as shared-purse deposits.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if members %}
+<div class="modal fade" id="modalExpense" tabindex="-1" aria-labelledby="modalExpenseLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title fs-5" id="modalExpenseLabel">New expense</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="/events/{{ event.id }}/expenses#expenses" id="expense-form">
+        <div class="modal-body">
+          <div id="expense-form-alert" class="alert alert-danger py-2 small d-none" role="alert"></div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold" for="e_title">What was it?</label>
+              <input class="form-control" id="e_title" name="title" required maxlength="200" placeholder="Groceries, gas, tickets…">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold" for="e_category">Category</label>
+              <input class="form-control" list="catOptions" id="e_category" name="category" required maxlength="100" placeholder="Pick or type">
+              <datalist id="catOptions">
+                <option value="Food"><option value="Transport"><option value="Lodging">
+                <option value="Activities"><option value="Supplies"><option value="Other">
+              </datalist>
+            </div>
+            <div class="col-sm-6 col-md-4">
+              <label class="form-label fw-semibold" for="e_total">Total</label>
+              <div class="input-group">
+                <span class="input-group-text">₹</span>
+                <input class="form-control" id="e_total" name="amount_total" type="number" min="0.01" step="0.01" required>
+              </div>
+            </div>
+            <div class="col-sm-6 col-md-4">
+              <label class="form-label fw-semibold" for="e_date">Date</label>
+              <input class="form-control" id="e_date" name="expense_date" type="date" required>
+            </div>
+          </div>
+
+          <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+            <h3 class="h6 fw-bold mb-0">Who pays how much</h3>
+            <button class="btn btn-sm btn-outline-secondary collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#expenseSplitHelp" aria-expanded="false">Help</button>
+          </div>
+          <div class="collapse small et-muted mb-3" id="expenseSplitHelp">
+            Each line: pick a person, then either an <strong>exact rupee</strong> share or a <strong>percent of this expense total</strong>. All lines together must equal the total above. Use <strong>Split equally</strong> to fill one line per member with the total divided evenly (extra paise go to the first members so it adds up exactly). When you <strong>add or remove a line</strong>, shares are <strong>re-split evenly</strong> across the lines that remain (when the total above is a valid amount).
+          </div>
+          <p class="small fw-semibold mb-1">Who fronted this bill? (bill-front credit)</p>
+          <p class="small et-muted mb-2">The full bill amount is recorded as a <strong>bill-front credit</strong> for that person on <a href="/orgs/{{ organization.id }}#finances">organization finances</a> (not a shared-purse deposit). Use the <strong>radio on a split row</strong> (members with a linked account only). Default credits <strong>you</strong> (who saves the expense).</p>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="radio" name="pool_creditor_member_id" id="pool_cred_default" value="" checked>
+            <label class="form-check-label small" for="pool_cred_default">Person saving this expense (default)</label>
+          </div>
+          <div id="split-rows" class="mb-2"></div>
+          <div class="d-flex flex-wrap gap-2 mb-2">
+            <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" id="btn-split-equal" title="Divide the total evenly across everyone on this event">
+              <i class="bi bi-grid-3x2-gap me-1"></i>Split equally
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill" id="btn-add-split">
+              <i class="bi bi-plus-lg me-1"></i>Add line
+            </button>
+          </div>
+          <input type="hidden" name="splits_json" id="splits_json" value="[]">
+        </div>
+        <div class="modal-footer flex-column flex-sm-row gap-2">
+          <button type="button" class="btn btn-outline-secondary w-100 w-sm-auto" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary w-100 w-sm-auto px-4"><i class="bi bi-check2-circle me-2"></i>Save expense</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<a href="/orgs/{{ organization.id }}" class="et-link-back"><i class="bi bi-arrow-left"></i>Back to organization</a>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const eventId = {{ event.id }};
+  const searchEl = document.getElementById('om_search');
+  const suggEl = document.getElementById('om_suggestions');
+  const hiddenUid = document.getElementById('om_from_org_user_id');
+  const btnClear = document.getElementById('om_clear_pick');
+  const btnAddSel = document.getElementById('om_btn_add_selected');
+  const formAdd = document.getElementById('form-add-event-member');
+  const nameEl = document.getElementById('member_name');
+  const mobEl = document.getElementById('member_mobile');
+  const clientErr = document.getElementById('om_client_error');
+  const modalAdd = document.getElementById('modalAddMember');
+  if (!searchEl || !suggEl || !formAdd) return;
+
+  let debounceTimer = null;
+  let lastLabel = '';
+
+  function hideClientErr() {
+    if (!clientErr) return;
+    clientErr.classList.add('d-none');
+    clientErr.textContent = '';
+  }
+
+  function showClientErr(msg) {
+    if (!clientErr) return;
+    clientErr.textContent = msg;
+    clientErr.classList.remove('d-none');
+  }
+
+  function hideSuggs() {
+    suggEl.classList.add('d-none');
+    suggEl.innerHTML = '';
+  }
+
+  function setAddSelectedEnabled(on) {
+    if (btnAddSel) btnAddSel.disabled = !on;
+  }
+
+  function clearPick() {
+    hiddenUid.value = '';
+    searchEl.value = '';
+    lastLabel = '';
+    btnClear.disabled = true;
+    setAddSelectedEnabled(false);
+    hideSuggs();
+    hideClientErr();
+  }
+
+  function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function parseFetchError(r, bodyText) {
+    try {
+      const j = JSON.parse(bodyText);
+      const d = j.detail;
+      if (typeof d === 'string') return d;
+      if (Array.isArray(d)) return d.map((x) => x.msg || JSON.stringify(x)).join(' ');
+    } catch (_) {}
+    return r.status === 403 ? 'You do not have access to load suggestions.' : 'Could not load suggestions (' + r.status + ').';
+  }
+
+  async function fetchSuggs(q) {
+    const url = '/events/' + eventId + '/members/suggest?q=' + encodeURIComponent(q);
+    const r = await fetch(url, {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+      redirect: 'manual',
+    });
+    // Session expired / login redirect (opaque redirect or HTML login page)
+    if (r.type === 'opaqueredirect' || r.status === 0 || (r.status >= 300 && r.status < 400)) {
+      throw new Error('Session expired. Please refresh and sign in again.');
+    }
+    const t = await r.text();
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    if (!r.ok) {
+      if (r.status === 401) throw new Error('Session expired. Please refresh and sign in again.');
+      throw new Error(parseFetchError(r, t));
+    }
+    if (!ct.includes('application/json') || (t && t.trimStart().startsWith('<'))) {
+      throw new Error('Session expired or server returned a non-JSON response. Please refresh and sign in again.');
+    }
+    try {
+      return JSON.parse(t);
+    } catch (_) {
+      throw new Error('Could not read suggestions. Please refresh the page and try again.');
+    }
+  }
+
+  function applySelection(row) {
+    hiddenUid.value = String(row.user_id);
+    lastLabel = row.full_name + ' · ' + row.mobile;
+    searchEl.value = lastLabel;
+    btnClear.disabled = false;
+    setAddSelectedEnabled(true);
+    hideSuggs();
+    hideClientErr();
+  }
+
+  function submitOrgUser(row) {
+    hiddenUid.value = String(row.user_id);
+    if (nameEl) nameEl.value = '';
+    if (mobEl) mobEl.value = '';
+    hideClientErr();
+    formAdd.requestSubmit();
+  }
+
+  function renderSuggs(rows, q) {
+    suggEl.innerHTML = '';
+    if (!rows.length) {
+      const li = document.createElement('li');
+      li.className = 'list-group-item small et-muted';
+      li.textContent = q.trim()
+        ? 'No one in this organization matches that search, or they are already on this event.'
+        : 'Type to search, or everyone from this organization may already be on this event.';
+      suggEl.appendChild(li);
+    } else {
+      rows.forEach((row) => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex align-items-center gap-2 py-2 px-3 et-suggest-row';
+
+        const pick = document.createElement('button');
+        pick.type = 'button';
+        pick.className = 'btn btn-link text-start text-decoration-none p-0 flex-grow-1 min-w-0 text-body';
+        pick.setAttribute('role', 'option');
+        pick.innerHTML =
+          '<span class="fw-medium">' +
+          esc(row.full_name) +
+          '</span><span class="d-block small et-muted">' +
+          esc(row.mobile) +
+          '</span>';
+        pick.addEventListener('click', () => applySelection(row));
+
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'btn btn-primary btn-sm flex-shrink-0';
+        addBtn.textContent = 'Add';
+        addBtn.setAttribute('aria-label', 'Add ' + row.full_name);
+        addBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          submitOrgUser(row);
+        });
+
+        li.appendChild(pick);
+        li.appendChild(addBtn);
+        suggEl.appendChild(li);
+      });
+    }
+    suggEl.classList.remove('d-none');
+  }
+
+  searchEl.addEventListener('input', () => {
+    if (hiddenUid.value && searchEl.value !== lastLabel) {
+      hiddenUid.value = '';
+      btnClear.disabled = true;
+      setAddSelectedEnabled(false);
+    }
+    const q = searchEl.value;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      try {
+        const rows = await fetchSuggs(q);
+        renderSuggs(rows, q);
+      } catch (e) {
+        suggEl.innerHTML =
+          '<li class="list-group-item list-group-item-danger small">' +
+          esc(e.message || String(e)) +
+          '</li>';
+        suggEl.classList.remove('d-none');
+      }
+    }, 200);
+  });
+
+  btnClear.addEventListener('click', clearPick);
+
+  if (btnAddSel) {
+    btnAddSel.addEventListener('click', () => {
+      if (!(hiddenUid.value || '').trim()) return;
+      hideClientErr();
+      formAdd.requestSubmit();
+    });
+  }
+
+  if (modalAdd) {
+    modalAdd.addEventListener('hidden.bs.modal', () => {
+      clearPick();
+      if (nameEl) nameEl.value = '';
+      if (mobEl) mobEl.value = '';
+    });
+  }
+
+  document.addEventListener('click', (ev) => {
+    if (modalAdd && modalAdd.classList.contains('show') && formAdd && !formAdd.contains(ev.target)) {
+      hideSuggs();
+    }
+  });
+
+  formAdd.addEventListener('submit', (ev) => {
+    hideClientErr();
+    const uid = (hiddenUid.value || '').trim();
+    const n = (nameEl && nameEl.value) ? nameEl.value.trim() : '';
+    const m = (mobEl && mobEl.value) ? mobEl.value.trim() : '';
+    if (!uid && !n && !m) {
+      ev.preventDefault();
+      showClientErr('Choose someone from the organization list, or enter a display name and/or a registered mobile number.');
+      return;
+    }
+  });
+})();
+</script>
+{% if members %}
+<script>
+  const MEMBERS = {{ members_opts | tojson }};
+
+  const splitContainer = document.getElementById('split-rows');
+  const btnAdd = document.getElementById('btn-add-split');
+  const btnEqual = document.getElementById('btn-split-equal');
+  const form = document.getElementById('expense-form');
+  const alertEl = document.getElementById('expense-form-alert');
+
+  function memberIdNum(mid) {
+    if (mid == null || mid === '') return NaN;
+    const n = parseInt(String(mid), 10);
+    return Number.isNaN(n) ? NaN : n;
+  }
+
+  function memberHasUserId(mid) {
+    const id = memberIdNum(mid);
+    if (Number.isNaN(id)) return false;
+    const m = MEMBERS.find(
+      (x) => memberIdNum(x.id) === id || String(x.id) === String(mid)
+    );
+    return !!(m && m.user_id != null && m.user_id !== '');
+  }
+
+  function showExpenseAlert(msg) {
+    alertEl.textContent = msg;
+    alertEl.classList.remove('d-none');
+  }
+
+  function splitRowHtml(preset) {
+    preset = preset || {};
+    let mid = preset.memberId;
+    if (mid != null && mid !== '') mid = memberIdNum(mid);
+    else mid = null;
+    if (mid == null && MEMBERS.length) mid = memberIdNum(MEMBERS[0].id);
+    const mode = preset.mode || 'amount';
+    const value = preset.value;
+    const opts = MEMBERS.map(m =>
+      `<option value="${m.id}"${memberIdNum(m.id) === mid ? ' selected' : ''}>${String(m.name).replace(/</g, '&lt;')}</option>`
+    ).join('');
+    const amtSel = mode === 'amount' ? ' selected' : '';
+    const pctSel = mode === 'percent' ? ' selected' : '';
+    const valAttr = (value != null && value !== '') ? ` value="${value}"` : '';
+    const hasUser = memberHasUserId(mid);
+    const radioDis = hasUser ? '' : ' disabled';
+    const rid = 'pool_rad_' + String(mid) + '_' + Math.random().toString(36).slice(2, 9);
+    const poolTitle = hasUser ? 'Org pool credits this member' : 'Link an account to this member to use as pool creditor';
+    return `
+      <div class="split-row" data-split-row>
+          <div class="row g-2 align-items-center">
+          <div class="col-auto text-center pt-md-1">
+            <label class="et-pool-radio-label" for="${rid}">
+              <input type="radio" name="pool_creditor_member_id" id="${rid}" class="form-check-input pool-creditor-radio"${radioDis} value="${mid}" title="${poolTitle}">
+            </label>
+            <span class="small et-muted d-md-none d-block mt-1">Pool</span>
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label small fw-semibold mb-1">Member</label>
+            <select class="form-select split-member" required>${opts}</select>
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label small fw-semibold mb-1">Type</label>
+            <select class="form-select split-mode">
+              <option value="amount"${amtSel}>Exact ₹</option>
+              <option value="percent"${pctSel}>% of total</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label small fw-semibold mb-1">Value</label>
+            <input type="number" class="form-control split-value" min="0" step="0.01" placeholder="0"${valAttr}>
+          </div>
+          <div class="col-12 col-md-1">
+            <label class="form-label small d-none d-md-block mb-1">&nbsp;</label>
+            <button type="button" class="btn btn-outline-danger w-100 split-remove" title="Remove line"><i class="bi bi-trash3"></i></button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function clearSplitRows() {
+    splitContainer.querySelectorAll('[data-split-row]').forEach((el) => el.remove());
+  }
+
+  function appendSplitRow(preset) {
+    splitContainer.insertAdjacentHTML('beforeend', splitRowHtml(preset));
+    wireRow(splitContainer.lastElementChild);
+  }
+
+  /** Redistribute expense total evenly across current split rows (amount mode). No-op if total invalid or no rows. */
+  function equalSplitAmongCurrentRows() {
+    const rows = splitContainer.querySelectorAll('[data-split-row]');
+    const n = rows.length;
+    if (!n) return;
+    const totalRaw = document.getElementById('e_total').value;
+    const total = parseFloat(totalRaw);
+    if (!(total > 0) || Number.isNaN(total)) return;
+    const cents = Math.round(total * 100);
+    const base = Math.floor(cents / n);
+    const rem = cents % n;
+    rows.forEach((row, i) => {
+      const shareCents = base + (i < rem ? 1 : 0);
+      const rupees = (shareCents / 100).toFixed(2);
+      row.querySelector('.split-mode').value = 'amount';
+      row.querySelector('.split-value').value = rupees;
+    });
+  }
+
+  function applyEqualSplit() {
+    alertEl.classList.add('d-none');
+    alertEl.textContent = '';
+    const totalRaw = document.getElementById('e_total').value;
+    const total = parseFloat(totalRaw);
+    if (!MEMBERS.length) {
+      showExpenseAlert('Add members to this event before splitting an expense.');
+      return;
+    }
+    if (!(total > 0) || Number.isNaN(total)) {
+      showExpenseAlert('Enter a valid expense total first, then split equally.');
+      return;
+    }
+    const cents = Math.round(total * 100);
+    const n = MEMBERS.length;
+    const base = Math.floor(cents / n);
+    const rem = cents % n;
+    clearSplitRows();
+    MEMBERS.forEach((m, i) => {
+      const shareCents = base + (i < rem ? 1 : 0);
+      const rupees = (shareCents / 100).toFixed(2);
+      appendSplitRow({ memberId: m.id, mode: 'amount', value: rupees });
+    });
+  }
+
+  btnAdd.addEventListener('click', () => {
+    appendSplitRow();
+    equalSplitAmongCurrentRows();
+  });
+  btnEqual.addEventListener('click', applyEqualSplit);
+
+  function wireRow(row) {
+    const sel = row.querySelector('.split-member');
+    const rad = row.querySelector('.pool-creditor-radio');
+    function syncPoolRadio() {
+      if (!sel || !rad) return;
+      const mid = parseInt(sel.value, 10);
+      const hasUser = memberHasUserId(mid);
+      rad.value = String(mid);
+      rad.disabled = !hasUser;
+      if (!hasUser && rad.checked) {
+        const def = document.getElementById('pool_cred_default');
+        if (def) def.checked = true;
+      }
+    }
+    if (sel) sel.addEventListener('change', syncPoolRadio);
+    syncPoolRadio();
+    row.querySelector('.split-remove').addEventListener('click', () => {
+      const was = rad && rad.checked;
+      row.remove();
+      if (was) {
+        const def = document.getElementById('pool_cred_default');
+        if (def) def.checked = true;
+      }
+      equalSplitAmongCurrentRows();
+    });
+  }
+
+  if (MEMBERS.length) {
+    appendSplitRow();
+  }
+
+  form.addEventListener('submit', (ev) => {
+    alertEl.classList.add('d-none');
+    alertEl.textContent = '';
+    const rows = splitContainer.querySelectorAll('[data-split-row]');
+    const out = [];
+    rows.forEach(row => {
+      const member_id = parseInt(row.querySelector('.split-member').value, 10);
+      const mode = row.querySelector('.split-mode').value;
+      const raw = row.querySelector('.split-value').value;
+      const val = raw === '' ? null : parseFloat(raw);
+      if (val == null || isNaN(val) || val <= 0) return;
+      if (mode === 'amount') out.push({ member_id, amount: val });
+      else out.push({ member_id, percent: val });
+    });
+    document.getElementById('splits_json').value = JSON.stringify(out);
+    if (!out.length) {
+      ev.preventDefault();
+      showExpenseAlert('Add at least one split line with a positive value, or use Split equally.');
+    }
+  });
+
+  const d = document.getElementById('e_date');
+  if (d && !d.value) d.valueAsDate = new Date();
+
+  document.getElementById('modalExpense')?.addEventListener('hidden.bs.modal', () => {
+    alertEl?.classList.add('d-none');
+  });
+</script>
+{% endif %}
+{% endblock %}

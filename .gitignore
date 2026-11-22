@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+app_data.db
+.env
+.idea/
+.vercel/
+*.xlsx
+.DS_Store

@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block page_heading %}{% endblock %}
+{% block content %}
+<nav class="et-breadcrumb mb-2" aria-label="breadcrumb">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="/orgs">Organizations</a></li>
+    <li class="breadcrumb-item"><a href="/orgs/{{ organization.id }}">{{ organization.name }}</a></li>
+    <li class="breadcrumb-item"><a href="/events/{{ event.id }}">{{ event.name }}</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Edit expense</li>
+  </ol>
+</nav>
+
+<h1 class="h3 fw-bold mb-4">Edit expense</h1>
+
+<div class="et-form-panel mb-4">
+  <form method="post" action="/events/{{ event.id }}/expenses/{{ expense.id }}/edit#expenses" id="expense-form">
+    <div id="expense-form-alert" class="alert alert-danger py-2 small d-none" role="alert"></div>
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <label class="form-label fw-semibold" for="e_title">What was it?</label>
+        <input class="form-control" id="e_title" name="title" required maxlength="200" value="{{ expense.title }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label fw-semibold" for="e_category">Category</label>
+        <input class="form-control" list="catOptions" id="e_category" name="category" required maxlength="100" value="{{ expense.category }}">
+        <datalist id="catOptions">
+          <option value="Food"><option value="Transport"><option value="Lodging">
+          <option value="Activities"><option value="Supplies"><option value="Other">
+        </datalist>
+      </div>
+      <div class="col-sm-6 col-md-4">
+        <label class="form-label fw-semibold" for="e_total">Total</label>
+        <div class="input-group">
+          <span class="input-group-text">₹</span>
+          <input class="form-control" id="e_total" name="amount_total" type="number" min="0.01" step="0.01" required value="{{ expense.amount_total }}">
+        </div>
+      </div>
+      <div class="col-sm-6 col-md-4">
+        <label class="form-label fw-semibold" for="e_date">Date</label>
+        <input class="form-control" id="e_date" name="expense_date" type="date" required value="{{ expense.expense_date.isoformat() }}">
+      </div>
+    </div>
+
+    <p class="small fw-semibold mb-1">Who fronted this bill? (bill-front credit)</p>
+    <p class="small et-muted mb-2">Credits the chosen person on <a href="/orgs/{{ organization.id }}#finances">organization finances</a>. Use the <strong>radio on a split row</strong> (linked members only). Default: who logged this expense.</p>
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="radio" name="pool_creditor_member_id" id="pool_cred_default" value="" {% if not initial_pool_member_id %}checked{% endif %}>
+      <label class="form-check-label small" for="pool_cred_default">Person who logged this expense (default)</label>
+    </div>
+
+    <h3 class="h6 fw-bold mb-2">Who pays how much</h3>
+    <p class="small et-muted mb-3">Splits must add up to the total. Use <strong>Split equally</strong> to reset one line per member.</p>
+    <div id="split-rows" class="mb-2"></div>
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" id="btn-split-equal">
+        <i class="bi bi-grid-3x2-gap me-1"></i>Split equally
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill" id="btn-add-split">
+        <i class="bi bi-plus-lg me-1"></i>Add line
+      </button>
+    </div>
+    <input type="hidden" name="splits_json" id="splits_json" value="[]">
+    <div class="d-flex flex-wrap gap-2">
+      <a href="/events/{{ event.id }}#expenses" class="btn btn-outline-secondary">Cancel</a>
+      <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle me-2"></i>Save changes</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const MEMBERS = {{ members_opts | tojson }};
+  const INITIAL_SPLITS = {{ initial_splits | tojson }};
+  const INITIAL_POOL_MEMBER_ID = {{ initial_pool_member_id | tojson }};
+
+  const splitContainer = document.getElementById('split-rows');
+  const btnAdd = document.getElementById('btn-add-split');
+  const btnEqual = document.getElementById('btn-split-equal');
+  const form = document.getElementById('expense-form');
+  const alertEl = document.getElementById('expense-form-alert');
+
+  function memberIdNum(mid) {
+    if (mid == null || mid === '') return NaN;
+    const n = parseInt(String(mid), 10);
+    return Number.isNaN(n) ? NaN : n;
+  }
+
+  function memberHasUserId(mid) {
+    const id = memberIdNum(mid);
+    if (Number.isNaN(id)) return false;
+    const m = MEMBERS.find(
+      (x) => memberIdNum(x.id) === id || String(x.id) === String(mid)
+    );
+    return !!(m && m.user_id != null && m.user_id !== '');
+  }
+
+  function showExpenseAlert(msg) {
+    alertEl.textContent = msg;
+    alertEl.classList.remove('d-none');
+  }
+
+  function splitRowHtml(preset) {
+    preset = preset || {};
+    let mid = preset.memberId;
+    if (mid != null && mid !== '') mid = memberIdNum(mid);
+    else mid = null;
+    if (mid == null && MEMBERS.length) mid = memberIdNum(MEMBERS[0].id);
+    const mode = preset.mode || 'amount';
+    const value = preset.value;
+    const opts = MEMBERS.map(m =>
+      `<option value="${m.id}"${memberIdNum(m.id) === mid ? ' selected' : ''}>${String(m.name).replace(/</g, '&lt;')}</option>`
+    ).join('');
+    const amtSel = mode === 'amount' ? ' selected' : '';
+    const pctSel = mode === 'percent' ? ' selected' : '';
+    const valAttr = (value != null && value !== '') ? ` value="${value}"` : '';
+    const hasUser = memberHasUserId(mid);
+    const radioDis = hasUser ? '' : ' disabled';
+    const rid = 'pool_rad_' + String(mid) + '_' + Math.random().toString(36).slice(2, 9);
+    const poolTitle = hasUser ? 'Org pool credits this member' : 'Link an account to this member to use as pool creditor';
+    return `
+      <div class="split-row" data-split-row>
+        <div class="row g-2 align-items-center">
+          <div class="col-auto text-center pt-md-1">
+            <label class="et-pool-radio-label" for="${rid}">
+              <input type="radio" name="pool_creditor_member_id" id="${rid}" class="form-check-input pool-creditor-radio"${radioDis} value="${mid}" title="${poolTitle}">
+            </label>
+            <span class="small et-muted d-md-none d-block mt-1">Pool</span>
+          </div>
+          <div class="col-12 col-md-5">
+            <label class="form-label small fw-semibold mb-1">Member</label>
+            <select class="form-select split-member" required>${opts}</select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold mb-1">Type</label>
+            <select class="form-select split-mode">
+              <option value="amount"${amtSel}>Exact ₹</option>
+              <option value="percent"${pctSel}>% of total</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold mb-1">Value</label>
+            <input type="number" class="form-control split-value" min="0" step="0.01" placeholder="0"${valAttr}>
+          </div>
+          <div class="col-md-1">
+            <label class="form-label small d-none d-md-block mb-1">&nbsp;</label>
+            <button type="button" class="btn btn-outline-danger w-100 split-remove" title="Remove line"><i class="bi bi-trash3"></i></button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function clearSplitRows() {
+    splitContainer.querySelectorAll('[data-split-row]').forEach((el) => el.remove());
+  }
+
+  function appendSplitRow(preset) {
+    splitContainer.insertAdjacentHTML('beforeend', splitRowHtml(preset));
+    wireRow(splitContainer.lastElementChild);
+  }
+
+  function equalSplitAmongCurrentRows() {
+    const rows = splitContainer.querySelectorAll('[data-split-row]');
+    const n = rows.length;
+    if (!n) return;
+    const totalRaw = document.getElementById('e_total').value;
+    const total = parseFloat(totalRaw);
+    if (!(total > 0) || Number.isNaN(total)) return;
+    const cents = Math.round(total * 100);
+    const base = Math.floor(cents / n);
+    const rem = cents % n;
+    rows.forEach((row, i) => {
+      const shareCents = base + (i < rem ? 1 : 0);
+      const rupees = (shareCents / 100).toFixed(2);
+      row.querySelector('.split-mode').value = 'amount';
+      row.querySelector('.split-value').value = rupees;
+    });
+  }
+
+  function applyEqualSplit() {
+    alertEl.classList.add('d-none');
+    alertEl.textContent = '';
+    const totalRaw = document.getElementById('e_total').value;
+    const total = parseFloat(totalRaw);
+    if (!MEMBERS.length) {
+      showExpenseAlert('No members on this event.');
+      return;
+    }
+    if (!(total > 0) || Number.isNaN(total)) {
+      showExpenseAlert('Enter a valid expense total first.');
+      return;
+    }
+    const cents = Math.round(total * 100);
+    const n = MEMBERS.length;
+    const base = Math.floor(cents / n);
+    const rem = cents % n;
+    clearSplitRows();
+    MEMBERS.forEach((m, i) => {
+      const shareCents = base + (i < rem ? 1 : 0);
+      const rupees = (shareCents / 100).toFixed(2);
+      appendSplitRow({ memberId: m.id, mode: 'amount', value: rupees });
+    });
+  }
+
+  btnAdd.addEventListener('click', () => {
+    appendSplitRow();
+    equalSplitAmongCurrentRows();
+  });
+  btnEqual.addEventListener('click', applyEqualSplit);
+
+  function wireRow(row) {
+    const sel = row.querySelector('.split-member');
+    const rad = row.querySelector('.pool-creditor-radio');
+    function syncPoolRadio() {
+      if (!sel || !rad) return;
+      const mid = parseInt(sel.value, 10);
+      const hasUser = memberHasUserId(mid);
+      rad.value = String(mid);
+      rad.disabled = !hasUser;
+      if (!hasUser && rad.checked) {
+        const def = document.getElementById('pool_cred_default');
+        if (def) def.checked = true;
+      }
+    }
+    if (sel) sel.addEventListener('change', syncPoolRadio);
+    syncPoolRadio();
+    row.querySelector('.split-remove').addEventListener('click', () => {
+      const was = rad && rad.checked;
+      row.remove();
+      if (was) {
+        const def = document.getElementById('pool_cred_default');
+        if (def) def.checked = true;
+      }
+      equalSplitAmongCurrentRows();
+    });
+  }
+
+  if (INITIAL_SPLITS.length) {
+    INITIAL_SPLITS.forEach(s => {
+      appendSplitRow({
+        memberId: s.member_id,
+        mode: 'amount',
+        value: String(s.amount),
+      });
+    });
+  } else if (MEMBERS.length) {
+    appendSplitRow();
+  }
+
+  function applyInitialPoolRadio() {
+    if (INITIAL_POOL_MEMBER_ID == null) return;
+    const r = splitContainer.querySelector(
+      '.pool-creditor-radio[value="' + INITIAL_POOL_MEMBER_ID + '"]'
+    );
+    if (r && !r.disabled) {
+      r.checked = true;
+      const def = document.getElementById('pool_cred_default');
+      if (def) def.checked = false;
+    }
+  }
+  applyInitialPoolRadio();
+
+  form.addEventListener('submit', (ev) => {
+    alertEl.classList.add('d-none');
+    alertEl.textContent = '';
+    const rows = splitContainer.querySelectorAll('[data-split-row]');
+    const out = [];
+    rows.forEach(row => {
+      const member_id = parseInt(row.querySelector('.split-member').value, 10);
+      const mode = row.querySelector('.split-mode').value;
+      const raw = row.querySelector('.split-value').value;
+      const val = raw === '' ? null : parseFloat(raw);
+      if (val == null || isNaN(val) || val <= 0) return;
+      if (mode === 'amount') out.push({ member_id, amount: val });
+      else out.push({ member_id, percent: val });
+    });
+    document.getElementById('splits_json').value = JSON.stringify(out);
+    if (!out.length) {
+      ev.preventDefault();
+      showExpenseAlert('Add at least one split line with a positive value.');
+    }
+  });
+</script>
+{% endblock %}

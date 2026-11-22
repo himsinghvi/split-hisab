@@ -1,0 +1,878 @@
+import json
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+
+from app import activity_service, excel_export, services
+from app.auth_web import require_session_user, require_session_user_json, session_user_id
+from app.database import get_db
+from app.models import Expense, Member, OrganizationContribution, User
+from app.schemas import ExpenseCreate, ExpenseSplitInput
+
+router = APIRouter()
+_TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+
+def _money(d: Decimal | float) -> str:
+    return f"₹{Decimal(str(d)):.2f}"
+
+
+templates.env.filters["money"] = _money
+
+
+def _redirect_event_members(
+    event_id: int, *, error: str | None = None
+) -> RedirectResponse:
+    if error:
+        return RedirectResponse(
+            f"/events/{event_id}?error={quote(str(error))}#members",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(
+        f"/events/{event_id}#members", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+def _redirect_org_pool(
+    org_id: int, *, error: str | None = None, fragment: str = "add-deposit"
+) -> RedirectResponse:
+    if error:
+        return RedirectResponse(
+            f"/orgs/{org_id}?error={quote(str(error))}#{fragment}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(f"/orgs/{org_id}#{fragment}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _parse_pool_creditor_member_id(raw: str | None) -> int | None:
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid organization pool selection.",
+        ) from None
+
+
+@router.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    if session_user_id(request):
+        return RedirectResponse("/orgs", status_code=status.HTTP_302_FOUND)
+    return RedirectResponse("/auth/login", status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/orgs", response_class=HTMLResponse)
+def page_orgs(request: Request, db: Session = Depends(get_db)):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    orgs = services.list_organizations_for_user(db, uid)
+    summary = services.user_personal_balance_summary(db, uid)
+    return templates.TemplateResponse(
+        request,
+        "orgs.html",
+        {
+            "orgs": orgs,
+            "title": "Your organizations",
+            "summary": summary,
+        },
+    )
+
+
+@router.get("/orgs/new", response_class=HTMLResponse)
+def page_new_org(request: Request):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    return templates.TemplateResponse(
+        request, "org_new.html", {"title": "New organization"}
+    )
+
+
+@router.post("/orgs/new")
+def post_new_org(
+    request: Request, name: str = Form(...), db: Session = Depends(get_db)
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(400, "Name is required")
+    org = services.create_organization(db, uid, name)
+    return RedirectResponse(
+        f"/orgs/{org.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/orgs/{org_id}", response_class=HTMLResponse)
+def page_org_detail(
+    request: Request, org_id: int, db: Session = Depends(get_db)
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    org = services.get_organization(db, org_id)
+    if not org or not services.user_in_organization(db, uid, org_id):
+        raise HTTPException(404, "Organization not found")
+    events = services.list_events_for_organization(db, org_id)
+    org_activities = activity_service.list_for_org(db, uid, org_id, limit=40)
+    membership_remove_ok = {
+        om.id: services.user_can_remove_org_membership(db, om.id, uid)
+        for om in org.members
+    }
+    org_balances = services.org_member_balances(db, org_id)
+    org_spent = services.org_total_expenses(db, org_id)
+    org_manual = services.org_manual_total_contributed(db, org_id)
+    balance_totals = {
+        "total_expenditure": org_spent,
+    }
+    pool_available = services.org_pool_available(db, org_id)
+    pool_contributed = org_manual
+    pool_spent_org = org_spent
+    contrib_rows = []
+    contrib_rows_expense_linked = []
+    for c in sorted(org.org_contributions or [], key=lambda x: x.created_at, reverse=True):
+        u = c.user
+        uname = ((u.full_name or "").strip() or u.mobile) if u else str(c.user_id)
+        ev_for_row = c.expense.event_id if c.expense else None
+        row = {
+            "id": c.id,
+            "user_name": uname,
+            "user_id": c.user_id,
+            "amount": c.amount,
+            "note": c.note,
+            "created_at": c.created_at,
+            "expense_id": c.expense_id,
+            "event_id": ev_for_row,
+            "can_manage": services.user_can_manage_org_contribution(db, c.id, uid),
+        }
+        if c.expense_id is not None:
+            contrib_rows_expense_linked.append(row)
+        else:
+            contrib_rows.append(row)
+    org_member_opts = [
+        {"user_id": om.user_id, "name": ((om.user.full_name or "").strip() or om.user.mobile)}
+        for om in sorted(org.members, key=lambda x: x.id)
+    ]
+    return templates.TemplateResponse(
+        request,
+        "org_detail.html",
+        {
+            "org": org,
+            "events": events,
+            "title": org.name,
+            "org_activities": org_activities,
+            "current_user_id": uid,
+            "membership_remove_ok": membership_remove_ok,
+            "org_balances": org_balances,
+            "balance_totals": balance_totals,
+            "pool_available": pool_available,
+            "pool_contributed": pool_contributed,
+            "pool_spent_org": pool_spent_org,
+            "contributions": contrib_rows,
+            "contributions_expense_linked": contrib_rows_expense_linked,
+            "org_member_opts": org_member_opts,
+            "pool_error": request.query_params.get("error"),
+        },
+    )
+
+
+@router.post("/orgs/{org_id}/members")
+def post_org_add_member(
+    request: Request,
+    org_id: int,
+    mobile: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_in_organization(db, uid, org_id):
+        raise HTTPException(404, "Organization not found")
+    try:
+        services.add_organization_member_by_mobile(db, org_id, mobile, uid)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return RedirectResponse(
+        f"/orgs/{org_id}#members", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/orgs/{org_id}/events/new")
+def post_new_event(
+    request: Request,
+    org_id: int,
+    name: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(400, "Event name is required")
+    try:
+        ev = services.create_event(db, org_id, uid, name)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    return RedirectResponse(
+        f"/events/{ev.id}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/orgs/{org_id}/contributions")
+def post_org_contribution(
+    request: Request,
+    org_id: int,
+    user_id: int = Form(...),
+    amount: Decimal = Form(...),
+    note: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_in_organization(db, uid, org_id):
+        raise HTTPException(404, "Organization not found")
+    if amount <= 0:
+        return _redirect_org_pool(org_id, error="Amount must be positive")
+    try:
+        services.add_org_contribution(
+            db,
+            org_id,
+            user_id,
+            amount,
+            (note or "").strip() or None,
+            actor_user_id=uid,
+        )
+    except PermissionError as e:
+        return _redirect_org_pool(org_id, error=str(e))
+    except ValueError as e:
+        return _redirect_org_pool(org_id, error=str(e))
+    return _redirect_org_pool(org_id)
+
+
+@router.post("/orgs/{org_id}/contributions/{contribution_id}/edit")
+def post_edit_org_contribution(
+    request: Request,
+    org_id: int,
+    contribution_id: int,
+    amount: Decimal = Form(...),
+    note: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_in_organization(db, uid, org_id):
+        raise HTTPException(404, "Organization not found")
+    c = db.get(OrganizationContribution, contribution_id)
+    if not c or c.organization_id != org_id:
+        raise HTTPException(404, "Pool entry not found")
+    try:
+        services.update_org_contribution(
+            db, contribution_id, uid, amount=amount, note=note
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return _redirect_org_pool(org_id, fragment="finances")
+
+
+@router.post("/orgs/{org_id}/contributions/{contribution_id}/delete")
+def post_delete_org_contribution(
+    request: Request,
+    org_id: int,
+    contribution_id: int,
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_in_organization(db, uid, org_id):
+        raise HTTPException(404, "Organization not found")
+    c = db.get(OrganizationContribution, contribution_id)
+    if not c or c.organization_id != org_id:
+        raise HTTPException(404, "Pool entry not found")
+    try:
+        services.delete_org_contribution(db, contribution_id, uid)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return _redirect_org_pool(org_id, fragment="finances")
+
+
+@router.get("/events/{event_id}", response_class=HTMLResponse)
+def page_event_detail(
+    request: Request, event_id: int, db: Session = Depends(get_db)
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_can_access_event(db, uid, event_id):
+        raise HTTPException(404, "Event not found")
+    ev = services.get_event(db, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    balances = services.member_balances(db, event_id)
+    expenses = sorted(
+        ev.expenses, key=lambda e: (e.expense_date, e.id), reverse=True
+    )
+    oid = ev.organization_id
+    event_total_expenditure = services.event_total_expenses(db, event_id)
+
+    event_expense_total = sum((b.expended for b in balances), Decimal("0"))
+    balance_totals = {
+        "total_expenditure": event_total_expenditure,
+        "expended": event_expense_total,
+    }
+
+    org_rows = services.org_member_balances(db, oid)
+    org_balance_by_user_id = {b.user_id: b for b in org_rows if b.user_id is not None}
+
+    mems = sorted(ev.members, key=lambda m: m.id)
+    members_opts = [{"id": m.id, "name": m.name, "user_id": m.user_id} for m in mems]
+
+    event_activities = activity_service.list_for_event(db, uid, event_id, limit=40)
+
+    expense_manage = {
+        e.id: services.user_can_manage_expense(db, e.id, uid) for e in expenses
+    }
+    member_manage = {
+        m.id: services.user_can_manage_member(db, m.id, uid) for m in mems
+    }
+
+    return templates.TemplateResponse(
+        request,
+        "event_detail.html",
+        {
+            "event": ev,
+            "organization": ev.organization,
+            "members": mems,
+            "members_opts": members_opts,
+            "balances": balances,
+            "balance_totals": balance_totals,
+            "expenses": expenses,
+            "org_balance_by_user_id": org_balance_by_user_id,
+            "title": ev.name,
+            "event_activities": event_activities,
+            "current_user_id": uid,
+            "expense_manage": expense_manage,
+            "member_manage": member_manage,
+            "member_error": request.query_params.get("error"),
+        },
+    )
+
+
+@router.get("/events/{event_id}/members/suggest")
+def get_event_member_suggestions(
+    request: Request,
+    event_id: int,
+    q: str = Query("", max_length=80),
+    db: Session = Depends(get_db),
+):
+    # Must return JSON (never HTML login redirect) — fetch() follows redirects and breaks JSON.parse.
+    uid = require_session_user_json(request)
+    try:
+        rows = services.suggest_org_users_for_event(db, event_id, uid, q)
+    except PermissionError as e:
+        raise HTTPException(403, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e)) from e
+    return JSONResponse(rows)
+
+
+@router.post("/events/{event_id}/members")
+def post_add_event_member(
+    request: Request,
+    event_id: int,
+    name: str = Form(""),
+    mobile: str | None = Form(None),
+    from_org_user_id: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    org_uid: int | None = None
+    if from_org_user_id and str(from_org_user_id).strip():
+        try:
+            org_uid = int(str(from_org_user_id).strip())
+        except ValueError:
+            return _redirect_event_members(
+                event_id,
+                error="Invalid selection. Please pick someone from the list again.",
+            )
+    try:
+        services.add_member(
+            db,
+            event_id,
+            name,
+            uid,
+            mobile,
+            from_org_user_id=org_uid,
+        )
+    except PermissionError as e:
+        return _redirect_event_members(event_id, error=str(e))
+    except ValueError as e:
+        return _redirect_event_members(event_id, error=str(e))
+    return _redirect_event_members(event_id)
+
+
+@router.post("/events/{event_id}/expenses")
+def post_expense(
+    request: Request,
+    event_id: int,
+    title: str = Form(...),
+    category: str = Form(...),
+    amount_total: Decimal = Form(...),
+    expense_date: date = Form(...),
+    splits_json: str = Form(...),
+    pool_creditor_member_id: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_can_access_event(db, uid, event_id):
+        raise HTTPException(404, "Event not found")
+    ev = services.get_event(db, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    try:
+        raw = json.loads(splits_json)
+        if not isinstance(raw, list):
+            raise ValueError("Invalid splits payload")
+        splits = [ExpenseSplitInput(**row) for row in raw]
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        raise HTTPException(400, f"Invalid splits: {e}") from e
+
+    mids = {m.id for m in ev.members}
+    for s in splits:
+        if s.member_id not in mids:
+            raise HTTPException(400, "Split references unknown member")
+
+    pcm = _parse_pool_creditor_member_id(pool_creditor_member_id)
+    payload = ExpenseCreate(
+        title=title.strip(),
+        category=category.strip(),
+        amount_total=amount_total,
+        expense_date=expense_date,
+        splits=splits,
+        pool_creditor_member_id=pcm,
+    )
+    try:
+        services.create_expense(db, event_id, payload, actor_user_id=uid)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    return RedirectResponse(
+        f"/events/{event_id}#expenses", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/orgs/{org_id}/edit")
+def post_edit_org(
+    request: Request,
+    org_id: int,
+    name: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_in_organization(db, uid, org_id):
+        raise HTTPException(404, "Organization not found")
+    try:
+        services.update_organization(db, org_id, uid, name)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return RedirectResponse(f"/orgs/{org_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/orgs/{org_id}/delete")
+def post_delete_org(
+    request: Request,
+    org_id: int,
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_in_organization(db, uid, org_id):
+        raise HTTPException(404, "Organization not found")
+    try:
+        services.delete_organization(db, org_id, uid)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return RedirectResponse("/orgs", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/orgs/{org_id}/memberships/{membership_id}/remove")
+def post_remove_org_member(
+    request: Request,
+    org_id: int,
+    membership_id: int,
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_in_organization(db, uid, org_id):
+        raise HTTPException(404, "Organization not found")
+    try:
+        services.remove_organization_member(db, membership_id, uid)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return RedirectResponse(f"/orgs/{org_id}#members", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/events/{event_id}/edit")
+def post_edit_event(
+    request: Request,
+    event_id: int,
+    name: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_can_access_event(db, uid, event_id):
+        raise HTTPException(404, "Event not found")
+    try:
+        services.update_event(db, event_id, uid, name)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return RedirectResponse(f"/events/{event_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/events/{event_id}/delete")
+def post_delete_event(
+    request: Request,
+    event_id: int,
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    ev = services.get_event(db, event_id)
+    if not ev or not services.user_can_access_event(db, uid, event_id):
+        raise HTTPException(404, "Event not found")
+    org_id = ev.organization_id
+    try:
+        services.delete_event(db, event_id, uid)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return RedirectResponse(f"/orgs/{org_id}#events", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/events/{event_id}/members/{member_id}/edit")
+def post_edit_event_member(
+    request: Request,
+    event_id: int,
+    member_id: int,
+    name: str = Form(""),
+    mobile: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    mem = db.get(Member, member_id)
+    if not mem or mem.event_id != event_id:
+        raise HTTPException(404, "Member not found")
+    try:
+        services.update_member(
+            db,
+            member_id,
+            uid,
+            name=name.strip() or None,
+            mobile=mobile.strip() or None,
+        )
+    except PermissionError as e:
+        return _redirect_event_members(event_id, error=str(e))
+    except ValueError as e:
+        return _redirect_event_members(event_id, error=str(e))
+    return _redirect_event_members(event_id)
+
+
+@router.post("/events/{event_id}/members/{member_id}/delete")
+def post_delete_event_member(
+    request: Request,
+    event_id: int,
+    member_id: int,
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    mem = db.get(Member, member_id)
+    if not mem or mem.event_id != event_id:
+        raise HTTPException(404, "Member not found")
+    try:
+        services.delete_member(db, member_id, uid)
+    except PermissionError as e:
+        return _redirect_event_members(event_id, error=str(e))
+    except ValueError as e:
+        return _redirect_event_members(event_id, error=str(e))
+    return _redirect_event_members(event_id)
+
+
+@router.get("/events/{event_id}/expenses/{expense_id}/edit", response_class=HTMLResponse)
+def page_edit_expense(
+    request: Request,
+    event_id: int,
+    expense_id: int,
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_can_access_event(db, uid, event_id):
+        raise HTTPException(404, "Event not found")
+    if not services.user_can_manage_expense(db, expense_id, uid):
+        raise HTTPException(403, "You can only edit expenses you created.")
+    ev = services.get_event(db, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    exp = next((e for e in ev.expenses if e.id == expense_id), None)
+    if not exp:
+        raise HTTPException(404, "Expense not found")
+    mems = sorted(ev.members, key=lambda m: m.id)
+    members_opts = [{"id": m.id, "name": m.name, "user_id": m.user_id} for m in mems]
+    initial_pool_member_id = None
+    pcu = getattr(exp, "pool_credit_user_id", None)
+    if pcu is not None:
+        for m in mems:
+            if m.user_id == pcu:
+                initial_pool_member_id = m.id
+                break
+    initial_splits = [
+        {
+            "member_id": s.member_id,
+            "amount": float(s.amount),
+        }
+        for s in sorted(exp.splits, key=lambda x: x.member_id)
+    ]
+    return templates.TemplateResponse(
+        request,
+        "expense_edit.html",
+        {
+            "event": ev,
+            "organization": ev.organization,
+            "expense": exp,
+            "members_opts": members_opts,
+            "initial_pool_member_id": initial_pool_member_id,
+            "initial_splits": initial_splits,
+            "title": f"Edit: {exp.title}",
+        },
+    )
+
+
+@router.post("/events/{event_id}/expenses/{expense_id}/edit")
+def post_edit_expense(
+    request: Request,
+    event_id: int,
+    expense_id: int,
+    title: str = Form(...),
+    category: str = Form(...),
+    amount_total: Decimal = Form(...),
+    expense_date: date = Form(...),
+    splits_json: str = Form(...),
+    pool_creditor_member_id: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_can_access_event(db, uid, event_id):
+        raise HTTPException(404, "Event not found")
+    ev = services.get_event(db, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    exp_obj = db.get(Expense, expense_id)
+    if not exp_obj or exp_obj.event_id != event_id:
+        raise HTTPException(404, "Expense not found")
+    try:
+        raw = json.loads(splits_json)
+        if not isinstance(raw, list):
+            raise ValueError("Invalid splits payload")
+        splits = [ExpenseSplitInput(**row) for row in raw]
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        raise HTTPException(400, f"Invalid splits: {e}") from e
+
+    mids = {m.id for m in ev.members}
+    for s in splits:
+        if s.member_id not in mids:
+            raise HTTPException(400, "Split references unknown member")
+
+    pcm = _parse_pool_creditor_member_id(pool_creditor_member_id)
+    payload = ExpenseCreate(
+        title=title.strip(),
+        category=category.strip(),
+        amount_total=amount_total,
+        expense_date=expense_date,
+        splits=splits,
+        pool_creditor_member_id=pcm,
+    )
+    try:
+        services.update_expense(
+            db, expense_id, payload, acting_user_id=uid
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    return RedirectResponse(
+        f"/events/{event_id}#expenses", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/events/{event_id}/expenses/{expense_id}/delete")
+def post_delete_expense(
+    request: Request,
+    event_id: int,
+    expense_id: int,
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_can_access_event(db, uid, event_id):
+        raise HTTPException(404, "Event not found")
+    exp_obj = db.get(Expense, expense_id)
+    if not exp_obj or exp_obj.event_id != event_id:
+        raise HTTPException(404, "Expense not found")
+    try:
+        services.delete_expense(db, expense_id, uid)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return RedirectResponse(
+        f"/events/{event_id}#expenses", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/profile", response_class=HTMLResponse)
+def page_profile(request: Request, db: Session = Depends(get_db)):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    user = db.get(User, uid)
+    if not user:
+        return RedirectResponse("/auth/login", status_code=status.HTTP_302_FOUND)
+    return templates.TemplateResponse(
+        request,
+        "profile.html",
+        {
+            "title": "Your profile",
+            "user": user,
+            "saved": request.query_params.get("saved") == "1",
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@router.post("/profile")
+def post_profile(
+    request: Request,
+    full_name: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    try:
+        services.update_user_full_name(db, uid, full_name)
+    except ValueError as e:
+        return RedirectResponse(
+            f"/profile?error={quote(str(e))}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(
+        "/profile?saved=1", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.get("/notifications", response_class=HTMLResponse)
+def page_notifications(request: Request, db: Session = Depends(get_db)):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    rows = activity_service.list_for_user(db, uid, limit=400)
+    grouped = activity_service.group_activities_hierarchy(db, rows)
+    return templates.TemplateResponse(
+        request,
+        "notifications.html",
+        {
+            "title": "Notifications",
+            "grouped": grouped,
+            "activities": rows,
+        },
+    )
+
+
+@router.post("/notifications/read-all")
+def post_notifications_read_all(request: Request, db: Session = Depends(get_db)):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    activity_service.mark_all_read(db, uid)
+    return RedirectResponse("/notifications", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/notifications/{activity_id}/read")
+def post_notification_read(
+    request: Request, activity_id: int, db: Session = Depends(get_db)
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    activity_service.mark_read(db, uid, activity_id)
+    return RedirectResponse("/notifications", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/events/{event_id}/export.xlsx")
+def download_event_excel(
+    request: Request, event_id: int, db: Session = Depends(get_db)
+):
+    uid = require_session_user(request)
+    if isinstance(uid, RedirectResponse):
+        return uid
+    if not services.user_can_access_event(db, uid, event_id):
+        raise HTTPException(404, "Event not found")
+    out = excel_export.build_event_report_xlsx(db, event_id)
+    if not out:
+        raise HTTPException(404, "Event not found")
+    content, filename = out
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

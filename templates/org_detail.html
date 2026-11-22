@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% block title %}{{ org.name }}{% endblock %}
+
+{% block page_heading %}{% endblock %}
+
+{% block content %}
+<nav class="et-breadcrumb mb-2" aria-label="breadcrumb">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="/orgs">Organizations</a></li>
+    <li class="breadcrumb-item active text-truncate" style="max-width: 14rem;" aria-current="page">{{ org.name }}</li>
+  </ol>
+</nav>
+
+<header class="mb-4">
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-2">
+    <div>
+      <h1 class="et-hero-title mb-2">{{ org.name }}</h1>
+      <p class="et-hero-lead mb-0">Invite members by mobile, then create events to track shared money for each occasion.</p>
+    </div>
+    {% if org.created_by_user_id == current_user_id %}
+    <div class="d-flex flex-wrap gap-2 align-items-start">
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#editOrgPanel" aria-expanded="false"><i class="bi bi-pencil me-1"></i>Edit name</button>
+      <form method="post" action="/orgs/{{ org.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this organization and all its events, members, and data? This cannot be undone.');">
+        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash3 me-1"></i>Delete org</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% if org.created_by_user_id == current_user_id %}
+  <div class="collapse mt-2" id="editOrgPanel">
+    <form method="post" action="/orgs/{{ org.id }}/edit" class="et-form-panel py-3" style="max-width: 28rem;">
+      <label class="form-label small fw-semibold" for="org_name_edit">Organization name</label>
+      <div class="input-group">
+        <input type="text" class="form-control" id="org_name_edit" name="name" value="{{ org.name }}" required maxlength="200">
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+</header>
+
+{% if pool_error %}
+<div class="alert alert-danger alert-dismissible fade show d-flex align-items-start gap-2 mb-3" role="alert">
+  <i class="bi bi-exclamation-circle flex-shrink-0 mt-1"></i>
+  <div class="flex-grow-1">{{ pool_error }}</div>
+  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Dismiss"></button>
+</div>
+{% endif %}
+
+<div class="et-section-nav mb-4">
+  <ul class="nav">
+    <li class="nav-item"><a class="nav-link" href="#finances"><i class="bi bi-wallet2 me-1"></i>Finances</a></li>
+    <li class="nav-item"><a class="nav-link" href="#members"><i class="bi bi-people me-1"></i>Members</a></li>
+    <li class="nav-item"><a class="nav-link" href="#events"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
+    <li class="nav-item"><a class="nav-link" href="#activity"><i class="bi bi-clock-history me-1"></i>Activity</a></li>
+  </ul>
+</div>
+
+<section class="mb-5 et-finances-section" id="finances">
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+    <div>
+      <h2 class="h4 fw-bold mb-1">Finances</h2>
+      <p class="small et-muted mb-0">Organization totals, each person’s balances, shared purse deposits, and bill-front credits in one place.</p>
+    </div>
+    {% if contributions %}
+    <span class="small fw-semibold text-nowrap et-muted">{{ contributions | length }} purse entries · {{ pool_contributed | money }} deposited</span>
+    {% endif %}
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-sm-8 col-lg-5">
+      <div class="et-fin-stat h-100">
+        <span class="et-fin-stat-label">Total expenditure</span>
+        <span class="et-fin-stat-value">{{ balance_totals.total_expenditure | money }}</span>
+        <span class="et-fin-stat-hint">Sum of every expense bill across all events in this organization</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 align-items-start">
+    <div class="col-12 col-xl-4 order-xl-1">
+      <div class="et-card mb-4">
+        <div class="et-card-body">
+          <h3 class="h6 fw-bold mb-2">Add to shared purse</h3>
+          <p class="small et-muted mb-3">Record cash or transfers into the shared pot (not bill-fronting — that happens when you save an expense).</p>
+          {% if org_member_opts %}
+          <form id="add-deposit" method="post" action="/orgs/{{ org.id }}/contributions#add-deposit" class="vstack gap-3">
+            <div>
+              <label class="form-label small fw-semibold mb-1" for="c_user">Member</label>
+              <select class="form-select" name="user_id" id="c_user" required>
+                {% for o in org_member_opts %}
+                <option value="{{ o.user_id }}">{{ o.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1" for="c_amount">Amount</label>
+              <div class="input-group">
+                <span class="input-group-text">₹</span>
+                <input class="form-control" type="number" name="amount" id="c_amount" min="0.01" step="0.01" required placeholder="0.00">
+              </div>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1" for="c_note">Note <span class="fw-normal et-muted">(optional)</span></label>
+              <input class="form-control" type="text" name="note" id="c_note" maxlength="200" placeholder="Venmo, cash…">
+            </div>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Add deposit</button>
+          </form>
+          {% else %}
+          <div class="alert alert-secondary small mb-0" role="status">
+            <i class="bi bi-info-circle me-1"></i>Invite <a href="#members" class="alert-link">organization members</a> first.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="et-card">
+        <div class="et-card-body p-0">
+          <div class="px-3 pt-3 pb-2 border-bottom">
+            <h3 class="h6 fw-bold mb-0">Ledgers</h3>
+            <p class="small et-muted mb-0">History of purse deposits vs automatic bill credits.</p>
+          </div>
+          <ul class="nav nav-tabs nav-fill px-2 pt-2 border-0" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="tab-purse" data-bs-toggle="tab" data-bs-target="#pane-purse" type="button" role="tab" aria-controls="pane-purse" aria-selected="true">Shared purse</button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-bill" data-bs-toggle="tab" data-bs-target="#pane-bill" type="button" role="tab" aria-controls="pane-bill" aria-selected="false">Bill-front</button>
+            </li>
+          </ul>
+          <div class="tab-content border-top bg-white rounded-bottom">
+            <div class="tab-pane fade show active p-0" id="pane-purse" role="tabpanel" aria-labelledby="tab-purse" tabindex="0">
+              {% if contributions %}
+              <div class="et-table-wrap">
+                <div class="table-responsive">
+                  <table class="table table-hover align-middle table-sm mb-0">
+                    <thead class="table-light"><tr><th>When</th><th>Person</th><th class="text-end">Amount</th><th>Note</th><th class="text-end">Actions</th></tr></thead>
+                    <tbody>
+                      {% for c in contributions %}
+                      <tr>
+                        <td class="text-nowrap small et-muted">{{ c.created_at.strftime('%b %d, %Y · %H:%M') }}</td>
+                        <td class="fw-medium">{{ c.user_name }}</td>
+                        <td class="text-end fw-semibold text-money-positive">{{ c.amount | money }}</td>
+                        <td class="small et-muted">{{ c.note or '—' }}</td>
+                        <td class="text-end text-nowrap">
+                          {% if c.can_manage %}
+                          <button type="button" class="btn btn-link btn-sm p-0 me-2" data-bs-toggle="collapse" data-bs-target="#editContrib{{ c.id }}">Edit</button>
+                          <form method="post" action="/orgs/{{ org.id }}/contributions/{{ c.id }}/delete#finances" class="d-inline" onsubmit="return confirm('Delete this entry?');">
+                            <button type="submit" class="btn btn-link btn-sm p-0 text-danger">Delete</button>
+                          </form>
+                          {% else %}<span class="small et-muted">—</span>{% endif %}
+                        </td>
+                      </tr>
+                      {% if c.can_manage %}
+                      <tr class="collapse table-light" id="editContrib{{ c.id }}">
+                        <td colspan="5" class="py-3">
+                          <form method="post" action="/orgs/{{ org.id }}/contributions/{{ c.id }}/edit#finances" class="row g-2 align-items-end">
+                            <div class="col-auto">
+                              <label class="form-label small mb-0">Amount ₹</label>
+                              <input type="number" class="form-control form-control-sm" name="amount" value="{{ c.amount }}" min="0.01" step="0.01" required style="width: 7rem;">
+                            </div>
+                            <div class="col-md-5">
+                              <label class="form-label small mb-0">Note</label>
+                              <input type="text" class="form-control form-control-sm" name="note" value="{{ c.note or '' }}" maxlength="200">
+                            </div>
+                            <div class="col-auto">
+                              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                            </div>
+                          </form>
+                        </td>
+                      </tr>
+                      {% endif %}
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% else %}
+              <p class="small et-muted mb-0 p-3">No manual purse entries yet.</p>
+              {% endif %}
+            </div>
+            <div class="tab-pane fade p-0" id="pane-bill" role="tabpanel" aria-labelledby="tab-bill" tabindex="0">
+              {% if contributions_expense_linked %}
+              <div class="et-table-wrap">
+                <div class="table-responsive">
+                  <table class="table table-hover align-middle table-sm mb-0">
+                    <thead class="table-light"><tr><th>When</th><th>Person</th><th class="text-end">Amount</th><th>Detail</th><th class="text-end">Actions</th></tr></thead>
+                    <tbody>
+                      {% for c in contributions_expense_linked %}
+                      <tr>
+                        <td class="text-nowrap small et-muted">{{ c.created_at.strftime('%b %d, %Y · %H:%M') }}</td>
+                        <td class="fw-medium">{{ c.user_name }}</td>
+                        <td class="text-end fw-semibold">{{ c.amount | money }}</td>
+                        <td class="small et-muted">
+                          {{ c.note or '—' }}
+                          {% if c.event_id %}<span class="d-block mt-1"><a href="/events/{{ c.event_id }}">Event</a></span>{% endif %}
+                        </td>
+                        <td class="text-end text-nowrap">
+                          {% if c.can_manage %}
+                          <button type="button" class="btn btn-link btn-sm p-0 me-2" data-bs-toggle="collapse" data-bs-target="#editContribExp{{ c.id }}">Edit</button>
+                          <form method="post" action="/orgs/{{ org.id }}/contributions/{{ c.id }}/delete#finances" class="d-inline" onsubmit="return confirm('Delete this credit?');">
+                            <button type="submit" class="btn btn-link btn-sm p-0 text-danger">Delete</button>
+                          </form>
+                          {% else %}<span class="small et-muted">—</span>{% endif %}
+                        </td>
+                      </tr>
+                      {% if c.can_manage %}
+                      <tr class="collapse table-light" id="editContribExp{{ c.id }}">
+                        <td colspan="5" class="py-3">
+                          <form method="post" action="/orgs/{{ org.id }}/contributions/{{ c.id }}/edit#finances" class="row g-2 align-items-end">
+                            <div class="col-auto">
+                              <label class="form-label small mb-0">Amount ₹</label>
+                              <input type="number" class="form-control form-control-sm" name="amount" value="{{ c.amount }}" min="0.01" step="0.01" required style="width: 7rem;">
+                            </div>
+                            <div class="col-md-5">
+                              <label class="form-label small mb-0">Note</label>
+                              <input type="text" class="form-control form-control-sm" name="note" value="{{ c.note or '' }}" maxlength="200">
+                            </div>
+                            <div class="col-auto">
+                              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                            </div>
+                          </form>
+                        </td>
+                      </tr>
+                      {% endif %}
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% else %}
+              <p class="small et-muted mb-0 p-3">No bill-front credits yet.</p>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-xl-8 order-xl-2" id="balances">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <h3 class="h6 fw-bold mb-0">Per person</h3>
+        <span class="small et-muted">Settlement = shared purse + paid on bills − your share</span>
+      </div>
+      {% if org_balances %}
+      <div class="et-card p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 et-fin-member-table">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">Member</th>
+                <th scope="col" class="text-end">Shared purse</th>
+                <th scope="col" class="text-end">Paid on bills</th>
+                <th scope="col" class="text-end">Your share</th>
+                <th scope="col" class="text-end">Settlement</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for b in org_balances %}
+              <tr>
+                <td class="fw-semibold">{{ b.name }}</td>
+                <td class="text-end font-monospace">{{ b.manual_contributed | money }}</td>
+                <td class="text-end font-monospace">{{ b.expense_front_pool | money }}</td>
+                <td class="text-end font-monospace">{{ b.expended | money }}</td>
+                <td class="text-end font-monospace fw-semibold {% if b.remaining >= 0 %}text-success{% else %}text-danger{% endif %}">{{ b.remaining | money }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% else %}
+      <div class="alert alert-secondary small mb-0">No organization members yet — invite people to see balances here.</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% if org_activities %}
+<section class="mb-4 et-card overflow-hidden" id="activity">
+  <button type="button" class="btn btn-link text-decoration-none text-body w-100 py-3 px-3 d-flex align-items-center justify-content-between rounded-0 collapsed et-activity-toggle"
+          data-bs-toggle="collapse" data-bs-target="#orgActivityCollapse" aria-expanded="false" aria-controls="orgActivityCollapse">
+    <span class="fw-semibold"><i class="bi bi-clock-history me-2 text-secondary"></i>Recent activity</span>
+    <span class="d-flex align-items-center gap-2">
+      <span class="badge rounded-pill bg-secondary bg-opacity-10 text-secondary border">{{ org_activities | length }}</span>
+      <i class="bi bi-chevron-down et-collapse-chevron text-muted"></i>
+    </span>
+  </button>
+  <div id="orgActivityCollapse" class="collapse">
+    <div class="border-top px-3 pb-3 pt-1">
+      <p class="small et-muted mb-2 mt-2">Updates for you in this organization.</p>
+      <ul class="list-group list-group-flush">
+        {% for a in org_activities %}
+        <li class="list-group-item px-0 d-flex justify-content-between align-items-start gap-2 {% if not a.read_at %}bg-light bg-opacity-50{% endif %}">
+          <div class="min-w-0">
+            <span class="small text-uppercase et-muted d-block mb-1" style="font-size: 0.68rem;">{{ a.kind | replace('_', ' ') }}</span>
+            <span class="small">{{ a.summary }}</span>
+            <span class="small et-muted d-block mt-1">{{ a.created_at.strftime('%b %d, %Y · %H:%M') }}</span>
+          </div>
+          {% if a.event_id %}
+          <a href="/events/{{ a.event_id }}" class="btn btn-sm btn-outline-primary flex-shrink-0">Event</a>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="small et-muted mb-0 mt-2"><a href="/notifications">View all notifications</a></p>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="mb-5" id="members">
+  <h2 class="h4 fw-bold mb-1">Organization members</h2>
+  <p class="small et-muted mb-4">Everyone here can see and manage all events under this organization.</p>
+
+  <ul class="list-group mb-4" style="max-width: 36rem;">
+    {% for om in org.members %}
+    <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <span class="fw-semibold">{{ om.user.full_name }}</span>
+        <span class="small et-muted d-block">{{ om.user.mobile }}</span>
+      </div>
+      {% if membership_remove_ok.get(om.id) %}
+      <form method="post" action="/orgs/{{ org.id }}/memberships/{{ om.id }}/remove#members" class="d-inline" onsubmit="return confirm('Remove this person from the organization?');">
+        <button type="submit" class="btn btn-outline-danger btn-sm">{% if om.user_id == current_user_id %}Leave{% else %}Remove{% endif %}</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+
+  <form method="post" action="/orgs/{{ org.id }}/members#members" class="et-form-panel" style="max-width: 36rem;">
+    <h3 class="h6 fw-bold mb-3">Invite by mobile</h3>
+    <p class="small et-muted mb-3">They must already have an account. Use digits only or with country code.</p>
+    <div class="input-group input-group-lg">
+      <span class="input-group-text"><i class="bi bi-phone"></i></span>
+      <input type="tel" class="form-control" name="mobile" required maxlength="20" placeholder="Mobile number">
+      <button type="submit" class="btn btn-primary">Add to org</button>
+    </div>
+  </form>
+</section>
+
+<section class="mb-5" id="events">
+  <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+      <h2 class="h4 fw-bold mb-1">Events</h2>
+      <p class="small et-muted mb-0">Each event has its own member list for splits and a shared expense log. <a href="#finances">Finances</a> on this page cover money for the whole organization.</p>
+    </div>
+  </div>
+
+  {% if events %}
+  <div class="list-group mb-4">
+    {% for ev in events %}
+    <div class="list-group-item d-flex flex-wrap align-items-center justify-content-between gap-2 py-3">
+      <a href="/events/{{ ev.id }}" class="fw-semibold text-decoration-none text-reset flex-grow-1">{{ ev.name }}</a>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        {% if ev.created_by_user_id == current_user_id %}
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#editEv{{ ev.id }}"><i class="bi bi-pencil"></i></button>
+        <form method="post" action="/events/{{ ev.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this event and all members and expenses under it?');">
+          <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash3"></i></button>
+        </form>
+        {% endif %}
+        <a href="/events/{{ ev.id }}" class="btn btn-sm btn-outline-primary">Open</a>
+      </div>
+      {% if ev.created_by_user_id == current_user_id %}
+      <div class="collapse w-100" id="editEv{{ ev.id }}">
+        <form method="post" action="/events/{{ ev.id }}/edit" class="d-flex flex-wrap gap-2 mt-2 pt-2 border-top">
+          <input type="text" class="form-control form-control-sm" name="name" value="{{ ev.name }}" required maxlength="200" style="max-width: 16rem;">
+          <button type="submit" class="btn btn-sm btn-primary">Save name</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="et-empty mb-4">
+    <p class="et-muted mb-3">No events yet. Create the first one for a trip, party, or billing period.</p>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/orgs/{{ org.id }}/events/new" class="et-form-panel" style="max-width: 32rem;">
+    <label class="form-label fw-semibold" for="ev_name">New event name</label>
+    <div class="input-group input-group-lg">
+      <input type="text" class="form-control" id="ev_name" name="name" required maxlength="200" placeholder="e.g. Ski trip March, June utilities">
+      <button type="submit" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Create event</button>
+    </div>
+  </form>
+</section>
+
+<a href="/orgs" class="et-link-back"><i class="bi bi-arrow-left"></i>All organizations</a>
+{% endblock %}

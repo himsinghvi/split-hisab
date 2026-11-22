@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Your profile{% endblock %}
+{% block page_heading %}{% endblock %}
+
+{% block content %}
+<nav class="et-breadcrumb mb-2" aria-label="breadcrumb">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="/orgs">Organizations</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Profile</li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-md-7 col-lg-5">
+    <div class="et-hero mb-4">
+      <h1 class="et-hero-title">Your profile</h1>
+      <p class="et-hero-lead mb-0">Update how your name appears across organizations and events. Your mobile number is your sign-in ID and cannot be changed here.</p>
+    </div>
+
+    {% if saved %}
+    <div class="alert alert-success d-flex align-items-start gap-2" role="status">
+      <i class="bi bi-check-circle flex-shrink-0 mt-1"></i>
+      <div>Name saved.</div>
+    </div>
+    {% endif %}
+    {% if error %}
+    <div class="alert alert-danger d-flex align-items-start gap-2" role="alert">
+      <i class="bi bi-exclamation-circle flex-shrink-0 mt-1"></i>
+      <div>{{ error }}</div>
+    </div>
+    {% endif %}
+
+    <form method="post" action="/profile" class="et-form-panel">
+      <div class="mb-3">
+        <label class="form-label fw-semibold" for="full_name">Display name</label>
+        <input type="text" class="form-control form-control-lg" id="full_name" name="full_name"
+               required maxlength="120" value="{{ user.full_name }}" autocomplete="name"
+               placeholder="How others see you">
+      </div>
+      <div class="mb-4">
+        <label class="form-label fw-semibold" for="mobile">Mobile</label>
+        <input type="tel" class="form-control form-control-lg" id="mobile" value="{{ user.mobile }}" disabled readonly>
+        <div class="form-text">Used to sign in and for organization invites.</div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg w-100">
+        <i class="bi bi-check2 me-1"></i>Save name
+      </button>
+    </form>
+
+    <a href="/orgs" class="et-link-back"><i class="bi bi-arrow-left"></i>Back to organizations</a>
+  </div>
+</div>
+{% endblock %}
