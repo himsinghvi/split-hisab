@@ -31,6 +31,17 @@
             <i class="bi bi-person-circle fs-3" aria-hidden="true"></i>
           </button>
           <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="navProfileMenu">
+            {% if request.state.current_user_name %}
+            <li>
+              <div class="px-3 py-2">
+                <div class="fw-semibold text-truncate" style="max-width: 14rem;" id="navProfileUserName">{{ request.state.current_user_name }}</div>
+                {% if request.state.current_user_mobile %}
+                <div class="small text-muted text-truncate">{{ request.state.current_user_mobile }}</div>
+                {% endif %}
+              </div>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            {% endif %}
             <li>
               <a class="dropdown-item" href="/profile">
                 <i class="bi bi-person me-2"></i>Edit profile

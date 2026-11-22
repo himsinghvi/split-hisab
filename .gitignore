@@ -8,3 +8,10 @@ app_data.db
 .vercel/
 *.xlsx
 .DS_Store
+node_modules/
+package-lock.json
+package.json
+_verify_*.mjs
+_verify_*.png
+.vercel
+.env*
