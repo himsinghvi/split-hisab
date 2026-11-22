@@ -86,6 +86,56 @@ body.et-body {
   color: #0d9488 !important;
 }
 
+.et-nav-profile-btn {
+  line-height: 1;
+  opacity: 0.95;
+}
+
+.et-nav-profile-btn:hover,
+.et-nav-profile-btn:focus {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+.et-nav-profile-btn .bi-person-circle {
+  vertical-align: -0.15em;
+}
+
+.et-member-pick-list {
+  max-height: min(42vh, 280px);
+  overflow-y: auto;
+  border: 1px solid var(--et-border);
+  border-radius: var(--et-radius-sm);
+  background: var(--et-bg-elevated);
+}
+
+.et-member-pick-list .form-check {
+  padding: 0.65rem 0.85rem 0.65rem 2.4rem;
+  margin: 0;
+  border-bottom: 1px solid var(--et-border);
+}
+
+.et-member-pick-list .form-check:last-child {
+  border-bottom: none;
+}
+
+.et-member-pick-list .form-check:hover {
+  background: var(--et-surface-2);
+}
+
+.et-member-pick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: var(--et-accent-soft);
+  color: var(--et-accent-hover);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
 /* Main */
 .et-main {
   padding-top: 1.5rem;

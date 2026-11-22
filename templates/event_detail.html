@@ -160,7 +160,7 @@
       <p class="small et-muted mb-0">{{ members | length }} on this event · expense splits</p>
     </div>
     <button type="button" class="btn btn-primary flex-shrink-0" data-bs-toggle="modal" data-bs-target="#modalAddMember">
-      <i class="bi bi-person-plus me-1"></i><span class="d-none d-sm-inline">Add member</span><span class="d-sm-none">Add</span>
+      <i class="bi bi-person-plus me-1"></i><span class="d-none d-sm-inline">Add members</span><span class="d-sm-none">Add</span>
     </button>
   </div>
 
@@ -207,7 +207,7 @@
   <div class="et-empty mb-3 py-4">
     <div class="et-empty-icon"><i class="bi bi-people"></i></div>
     <p class="et-muted mb-2">No members yet.</p>
-    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalAddMember">Add the first member</button>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalAddMember">Add members</button>
   </div>
   {% endfor %}
 </section>
@@ -216,7 +216,7 @@
   <div class="modal-dialog modal-dialog-scrollable modal-fullscreen-sm-down">
     <div class="modal-content">
       <div class="modal-header">
-        <h2 class="modal-title fs-5" id="modalAddMemberLabel">Add member</h2>
+        <h2 class="modal-title fs-5" id="modalAddMemberLabel">Add members</h2>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <form method="post" action="/events/{{ event.id }}/members" id="form-add-event-member" autocomplete="off">
@@ -224,32 +224,37 @@
           {% if member_error %}
           <div class="alert alert-danger py-2 small mb-3" role="alert">{{ member_error }}</div>
           {% endif %}
-          <input type="hidden" name="from_org_user_id" id="om_from_org_user_id" value="">
+          <input type="hidden" name="from_org_user_ids" id="om_from_org_user_ids" value="">
           <div id="om_client_error" class="alert alert-warning py-2 small d-none mb-3" role="alert"></div>
+
           <label for="om_search" class="form-label fw-semibold">From organization</label>
-          <p class="small et-muted mb-2">Search by name or mobile digits. Use <strong>Add</strong> on a row for one tap, or tap the name then <strong>Add selected</strong>.</p>
-          <div class="position-relative mb-2">
-            <div class="input-group">
-              <span class="input-group-text bg-white border-end-0"><i class="bi bi-search et-muted"></i></span>
-              <input type="text" class="form-control border-start-0 ps-0" id="om_search" maxlength="80" placeholder="Name or digits…" autocomplete="off">
-            </div>
-            <ul id="om_suggestions" class="list-group position-absolute w-100 shadow rounded-bottom d-none mt-1 et-suggest-list" role="listbox" aria-label="Organization members"></ul>
+          <p class="small et-muted mb-2">Search, then check one or more people and tap <strong>Add selected</strong>.</p>
+          <div class="input-group mb-2">
+            <span class="input-group-text bg-white border-end-0"><i class="bi bi-search et-muted"></i></span>
+            <input type="text" class="form-control border-start-0 ps-0" id="om_search" maxlength="80" placeholder="Filter by name or digits…" autocomplete="off">
           </div>
-          <div class="d-grid d-sm-flex gap-2 mb-3">
-            <button type="button" class="btn btn-outline-primary order-sm-1" id="om_btn_add_selected" disabled>Add selected</button>
-            <button type="button" class="btn btn-outline-secondary order-sm-0" id="om_clear_pick" disabled>Clear</button>
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="om_select_all" disabled>Select all</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="om_clear_pick" disabled>Clear</button>
+            <span class="small et-muted ms-auto" id="om_pick_count">0 selected</span>
           </div>
+          <div id="om_pick_chips" class="d-flex flex-wrap gap-1 mb-2"></div>
+          <div id="om_suggestions" class="et-member-pick-list mb-3" role="group" aria-label="Organization members to add"></div>
+          <div id="om_list_status" class="small et-muted mb-3">Loading organization members…</div>
+
           <hr class="my-3">
-          <p class="small fw-semibold mb-2">Add manually</p>
+          <p class="small fw-semibold mb-2">Or add one person manually</p>
           <label for="member_name" class="form-label small">Display name</label>
           <input type="text" class="form-control mb-2" id="member_name" name="name" maxlength="120" placeholder="Shown on splits (no account)">
           <label for="member_mobile" class="form-label small">Registered mobile <span class="fw-normal et-muted">(optional)</span></label>
           <input type="tel" class="form-control" id="member_mobile" name="mobile" maxlength="20" placeholder="Must match an existing account">
-          <p class="small et-muted mt-2 mb-0">If you used organization search above, these fields are ignored until you clear the selection.</p>
+          <p class="small et-muted mt-2 mb-0">Manual fields are used only when nobody is selected from the list above.</p>
         </div>
         <div class="modal-footer flex-column flex-sm-row gap-2 border-top-0 pt-0">
           <button type="button" class="btn btn-outline-secondary w-100 w-sm-auto me-sm-auto" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary w-100 w-sm-auto px-4"><i class="bi bi-plus-lg me-1"></i>Add member</button>
+          <button type="submit" class="btn btn-primary w-100 w-sm-auto px-4" id="om_btn_submit">
+            <i class="bi bi-plus-lg me-1"></i><span id="om_submit_label">Add members</span>
+          </button>
         </div>
       </form>
     </div>
@@ -453,19 +458,26 @@
 (function () {
   const eventId = {{ event.id }};
   const searchEl = document.getElementById('om_search');
-  const suggEl = document.getElementById('om_suggestions');
-  const hiddenUid = document.getElementById('om_from_org_user_id');
+  const listEl = document.getElementById('om_suggestions');
+  const statusEl = document.getElementById('om_list_status');
+  const hiddenIds = document.getElementById('om_from_org_user_ids');
+  const chipsEl = document.getElementById('om_pick_chips');
+  const countEl = document.getElementById('om_pick_count');
   const btnClear = document.getElementById('om_clear_pick');
-  const btnAddSel = document.getElementById('om_btn_add_selected');
+  const btnSelectAll = document.getElementById('om_select_all');
+  const submitLabel = document.getElementById('om_submit_label');
   const formAdd = document.getElementById('form-add-event-member');
   const nameEl = document.getElementById('member_name');
   const mobEl = document.getElementById('member_mobile');
   const clientErr = document.getElementById('om_client_error');
   const modalAdd = document.getElementById('modalAddMember');
-  if (!searchEl || !suggEl || !formAdd) return;
+  if (!searchEl || !listEl || !formAdd || !hiddenIds) return;
 
   let debounceTimer = null;
-  let lastLabel = '';
+  /** @type {Map<number, {user_id:number, full_name:string, mobile:string}>} */
+  const selected = new Map();
+  /** @type {Array<{user_id:number, full_name:string, mobile:string}>} */
+  let visibleRows = [];
 
   function hideClientErr() {
     if (!clientErr) return;
@@ -479,29 +491,45 @@
     clientErr.classList.remove('d-none');
   }
 
-  function hideSuggs() {
-    suggEl.classList.add('d-none');
-    suggEl.innerHTML = '';
-  }
-
-  function setAddSelectedEnabled(on) {
-    if (btnAddSel) btnAddSel.disabled = !on;
-  }
-
-  function clearPick() {
-    hiddenUid.value = '';
-    searchEl.value = '';
-    lastLabel = '';
-    btnClear.disabled = true;
-    setAddSelectedEnabled(false);
-    hideSuggs();
-    hideClientErr();
-  }
-
   function esc(s) {
     const d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
+  }
+
+  function syncHidden() {
+    const ids = Array.from(selected.keys());
+    hiddenIds.value = ids.join(',');
+    const n = ids.length;
+    if (countEl) countEl.textContent = n + ' selected';
+    if (btnClear) btnClear.disabled = n === 0;
+    if (submitLabel) {
+      submitLabel.textContent = n > 1 ? 'Add ' + n + ' members' : n === 1 ? 'Add 1 member' : 'Add members';
+    }
+    if (chipsEl) {
+      chipsEl.innerHTML = '';
+      selected.forEach((row) => {
+        const chip = document.createElement('span');
+        chip.className = 'et-member-pick-chip';
+        chip.innerHTML =
+          esc(row.full_name) +
+          ' <button type="button" class="btn btn-link p-0 text-decoration-none lh-1" style="font-size:1rem;color:inherit;opacity:.7" aria-label="Remove">&times;</button>';
+        chip.querySelector('button').addEventListener('click', () => {
+          selected.delete(row.user_id);
+          syncHidden();
+          renderList(visibleRows, searchEl.value);
+        });
+        chipsEl.appendChild(chip);
+      });
+    }
+  }
+
+  function clearPick() {
+    selected.clear();
+    searchEl.value = '';
+    syncHidden();
+    hideClientErr();
+    loadList('');
   }
 
   function parseFetchError(r, bodyText) {
@@ -521,7 +549,6 @@
       headers: { Accept: 'application/json' },
       redirect: 'manual',
     });
-    // Session expired / login redirect (opaque redirect or HTML login page)
     if (r.type === 'opaqueredirect' || r.status === 0 || (r.status >= 300 && r.status < 400)) {
       throw new Error('Session expired. Please refresh and sign in again.');
     }
@@ -541,126 +568,109 @@
     }
   }
 
-  function applySelection(row) {
-    hiddenUid.value = String(row.user_id);
-    lastLabel = row.full_name + ' · ' + row.mobile;
-    searchEl.value = lastLabel;
-    btnClear.disabled = false;
-    setAddSelectedEnabled(true);
-    hideSuggs();
-    hideClientErr();
-  }
+  function renderList(rows, q) {
+    visibleRows = rows || [];
+    listEl.innerHTML = '';
+    if (btnSelectAll) btnSelectAll.disabled = visibleRows.length === 0;
 
-  function submitOrgUser(row) {
-    hiddenUid.value = String(row.user_id);
-    if (nameEl) nameEl.value = '';
-    if (mobEl) mobEl.value = '';
-    hideClientErr();
-    formAdd.requestSubmit();
-  }
-
-  function renderSuggs(rows, q) {
-    suggEl.innerHTML = '';
-    if (!rows.length) {
-      const li = document.createElement('li');
-      li.className = 'list-group-item small et-muted';
-      li.textContent = q.trim()
-        ? 'No one in this organization matches that search, or they are already on this event.'
-        : 'Type to search, or everyone from this organization may already be on this event.';
-      suggEl.appendChild(li);
-    } else {
-      rows.forEach((row) => {
-        const li = document.createElement('li');
-        li.className = 'list-group-item d-flex align-items-center gap-2 py-2 px-3 et-suggest-row';
-
-        const pick = document.createElement('button');
-        pick.type = 'button';
-        pick.className = 'btn btn-link text-start text-decoration-none p-0 flex-grow-1 min-w-0 text-body';
-        pick.setAttribute('role', 'option');
-        pick.innerHTML =
-          '<span class="fw-medium">' +
-          esc(row.full_name) +
-          '</span><span class="d-block small et-muted">' +
-          esc(row.mobile) +
-          '</span>';
-        pick.addEventListener('click', () => applySelection(row));
-
-        const addBtn = document.createElement('button');
-        addBtn.type = 'button';
-        addBtn.className = 'btn btn-primary btn-sm flex-shrink-0';
-        addBtn.textContent = 'Add';
-        addBtn.setAttribute('aria-label', 'Add ' + row.full_name);
-        addBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          submitOrgUser(row);
-        });
-
-        li.appendChild(pick);
-        li.appendChild(addBtn);
-        suggEl.appendChild(li);
-      });
+    if (!visibleRows.length) {
+      if (statusEl) {
+        statusEl.textContent = (q || '').trim()
+          ? 'No matching organization members, or they are already on this event.'
+          : 'Everyone from this organization may already be on this event.';
+      }
+      return;
     }
-    suggEl.classList.remove('d-none');
+    if (statusEl) statusEl.textContent = visibleRows.length + ' available · check people to add together';
+
+    visibleRows.forEach((row) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'form-check';
+      const id = 'om_chk_' + row.user_id;
+      const checked = selected.has(row.user_id);
+      wrap.innerHTML =
+        '<input class="form-check-input" type="checkbox" id="' + id + '" ' + (checked ? 'checked' : '') + '>' +
+        '<label class="form-check-label w-100" for="' + id + '">' +
+        '<span class="fw-medium d-block">' + esc(row.full_name) + '</span>' +
+        '<span class="small et-muted">' + esc(row.mobile) + '</span></label>';
+      const cb = wrap.querySelector('input');
+      cb.addEventListener('change', () => {
+        if (cb.checked) selected.set(row.user_id, row);
+        else selected.delete(row.user_id);
+        syncHidden();
+      });
+      listEl.appendChild(wrap);
+    });
+  }
+
+  async function loadList(q) {
+    if (statusEl) statusEl.textContent = 'Loading…';
+    try {
+      const rows = await fetchSuggs(q);
+      renderList(rows, q);
+    } catch (e) {
+      listEl.innerHTML = '';
+      if (statusEl) statusEl.textContent = e.message || String(e);
+      if (btnSelectAll) btnSelectAll.disabled = true;
+    }
   }
 
   searchEl.addEventListener('input', () => {
-    if (hiddenUid.value && searchEl.value !== lastLabel) {
-      hiddenUid.value = '';
-      btnClear.disabled = true;
-      setAddSelectedEnabled(false);
-    }
     const q = searchEl.value;
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(async () => {
-      try {
-        const rows = await fetchSuggs(q);
-        renderSuggs(rows, q);
-      } catch (e) {
-        suggEl.innerHTML =
-          '<li class="list-group-item list-group-item-danger small">' +
-          esc(e.message || String(e)) +
-          '</li>';
-        suggEl.classList.remove('d-none');
-      }
-    }, 200);
+    debounceTimer = setTimeout(() => loadList(q), 200);
   });
 
-  btnClear.addEventListener('click', clearPick);
+  if (btnClear) btnClear.addEventListener('click', () => {
+    selected.clear();
+    syncHidden();
+    renderList(visibleRows, searchEl.value);
+    hideClientErr();
+  });
 
-  if (btnAddSel) {
-    btnAddSel.addEventListener('click', () => {
-      if (!(hiddenUid.value || '').trim()) return;
-      hideClientErr();
-      formAdd.requestSubmit();
+  if (btnSelectAll) {
+    btnSelectAll.addEventListener('click', () => {
+      visibleRows.forEach((row) => selected.set(row.user_id, row));
+      syncHidden();
+      renderList(visibleRows, searchEl.value);
     });
   }
 
   if (modalAdd) {
+    modalAdd.addEventListener('shown.bs.modal', () => {
+      loadList(searchEl.value || '');
+    });
     modalAdd.addEventListener('hidden.bs.modal', () => {
-      clearPick();
+      selected.clear();
+      searchEl.value = '';
+      syncHidden();
+      listEl.innerHTML = '';
+      if (statusEl) statusEl.textContent = '';
       if (nameEl) nameEl.value = '';
       if (mobEl) mobEl.value = '';
+      hideClientErr();
     });
   }
 
-  document.addEventListener('click', (ev) => {
-    if (modalAdd && modalAdd.classList.contains('show') && formAdd && !formAdd.contains(ev.target)) {
-      hideSuggs();
+  formAdd.addEventListener('submit', (ev) => {
+    hideClientErr();
+    syncHidden();
+    const ids = (hiddenIds.value || '').trim();
+    const n = (nameEl && nameEl.value) ? nameEl.value.trim() : '';
+    const m = (mobEl && mobEl.value) ? mobEl.value.trim() : '';
+    if (!ids && !n && !m) {
+      ev.preventDefault();
+      showClientErr('Select one or more people from the list, or enter a display name and/or registered mobile.');
+      return;
+    }
+    if (ids && (n || m)) {
+      // Prefer batch org picks; clear manual fields so server uses from_org_user_ids.
+      if (nameEl) nameEl.value = '';
+      if (mobEl) mobEl.value = '';
     }
   });
 
-  formAdd.addEventListener('submit', (ev) => {
-    hideClientErr();
-    const uid = (hiddenUid.value || '').trim();
-    const n = (nameEl && nameEl.value) ? nameEl.value.trim() : '';
-    const m = (mobEl && mobEl.value) ? mobEl.value.trim() : '';
-    if (!uid && !n && !m) {
-      ev.preventDefault();
-      showClientErr('Choose someone from the organization list, or enter a display name and/or a registered mobile number.');
-      return;
-    }
-  });
+  syncHidden();
 })();
 </script>
 {% if members %}

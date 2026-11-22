@@ -183,6 +183,7 @@ def page_org_detail(
             "contributions_expense_linked": contrib_rows_expense_linked,
             "org_member_opts": org_member_opts,
             "pool_error": request.query_params.get("error"),
+            "invite_error": request.query_params.get("invite_error"),
         },
     )
 
@@ -191,7 +192,8 @@ def page_org_detail(
 def post_org_add_member(
     request: Request,
     org_id: int,
-    mobile: str = Form(...),
+    mobile: str = Form(""),
+    mobiles: str = Form(""),
     db: Session = Depends(get_db),
 ):
     uid = require_session_user(request)
@@ -199,12 +201,19 @@ def post_org_add_member(
         return uid
     if not services.user_in_organization(db, uid, org_id):
         raise HTTPException(404, "Organization not found")
+    raw = (mobiles or "").strip() or (mobile or "").strip()
     try:
-        services.add_organization_member_by_mobile(db, org_id, mobile, uid)
+        services.add_organization_members_by_mobiles(db, org_id, raw, uid)
     except PermissionError as e:
-        raise HTTPException(403, str(e)) from e
+        return RedirectResponse(
+            f"/orgs/{org_id}?invite_error={quote(str(e))}#members",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        return RedirectResponse(
+            f"/orgs/{org_id}?invite_error={quote(str(e))}#members",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     return RedirectResponse(
         f"/orgs/{org_id}#members", status_code=status.HTTP_303_SEE_OTHER
     )
@@ -403,11 +412,36 @@ def post_add_event_member(
     name: str = Form(""),
     mobile: str | None = Form(None),
     from_org_user_id: str | None = Form(None),
+    from_org_user_ids: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     uid = require_session_user(request)
     if isinstance(uid, RedirectResponse):
         return uid
+
+    # Multi-select: comma-separated org user ids
+    batch_raw = (from_org_user_ids or "").strip()
+    if batch_raw:
+        ids: list[int] = []
+        for part in batch_raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                ids.append(int(part))
+            except ValueError:
+                return _redirect_event_members(
+                    event_id,
+                    error="Invalid selection. Please pick people from the list again.",
+                )
+        try:
+            services.add_members_from_org_user_ids(db, event_id, uid, ids)
+        except PermissionError as e:
+            return _redirect_event_members(event_id, error=str(e))
+        except ValueError as e:
+            return _redirect_event_members(event_id, error=str(e))
+        return _redirect_event_members(event_id)
+
     org_uid: int | None = None
     if from_org_user_id and str(from_org_user_id).strip():
         try:

@@ -331,12 +331,16 @@
 
   <form method="post" action="/orgs/{{ org.id }}/members#members" class="et-form-panel" style="max-width: 36rem;">
     <h3 class="h6 fw-bold mb-3">Invite by mobile</h3>
-    <p class="small et-muted mb-3">They must already have an account. Use digits only or with country code.</p>
-    <div class="input-group input-group-lg">
-      <span class="input-group-text"><i class="bi bi-phone"></i></span>
-      <input type="tel" class="form-control" name="mobile" required maxlength="20" placeholder="Mobile number">
-      <button type="submit" class="btn btn-primary">Add to org</button>
-    </div>
+    <p class="small et-muted mb-3">They must already have an account. Paste one number per line, or separate with commas / spaces.</p>
+    {% if invite_error %}
+    <div class="alert alert-danger py-2 small mb-3" role="alert">{{ invite_error }}</div>
+    {% endif %}
+    <label class="form-label fw-semibold" for="org_invite_mobiles">Mobile numbers</label>
+    <textarea class="form-control mb-3" id="org_invite_mobiles" name="mobiles" rows="4" required
+              placeholder="9876543210&#10;9876543211, 9876543212"></textarea>
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-person-plus me-1"></i>Add to organization
+    </button>
   </form>
 </section>
 

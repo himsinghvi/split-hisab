@@ -361,6 +361,76 @@ def create_event(db: Session, organization_id: int, user_id: int, name: str) -> 
     return ev
 
 
+def add_members_from_org_user_ids(
+    db: Session,
+    event_id: int,
+    acting_user_id: int,
+    user_ids: list[int],
+) -> tuple[int, list[str]]:
+    """Add several org roster users to an event. Returns (added_count, error messages)."""
+    if not user_can_access_event(db, acting_user_id, event_id):
+        raise PermissionError("You cannot edit this event.")
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for raw in user_ids:
+        try:
+            uid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if uid in seen:
+            continue
+        seen.add(uid)
+        ordered.append(uid)
+    if not ordered:
+        raise ValueError("Select at least one organization member to add.")
+
+    added = 0
+    errors: list[str] = []
+    for uid in ordered:
+        try:
+            add_member(
+                db,
+                event_id,
+                "",
+                acting_user_id,
+                None,
+                from_org_user_id=uid,
+            )
+            added += 1
+        except ValueError as e:
+            errors.append(str(e))
+    if added == 0 and errors:
+        raise ValueError(errors[0] if len(errors) == 1 else "; ".join(errors[:5]))
+    return added, errors
+
+
+def add_organization_members_by_mobiles(
+    db: Session,
+    organization_id: int,
+    mobiles_raw: str,
+    acting_user_id: int,
+) -> tuple[int, list[str]]:
+    """Invite several users by mobile (comma / newline / space separated)."""
+    if not user_in_organization(db, acting_user_id, organization_id):
+        raise PermissionError("You are not a member of this organization.")
+    parts = re.split(r"[\s,;]+", (mobiles_raw or "").strip())
+    mobiles = [p for p in parts if p]
+    if not mobiles:
+        raise ValueError("Enter at least one mobile number.")
+
+    added = 0
+    errors: list[str] = []
+    for m in mobiles:
+        try:
+            add_organization_member_by_mobile(db, organization_id, m, acting_user_id)
+            added += 1
+        except ValueError as e:
+            errors.append(f"{m}: {e}")
+    if added == 0 and errors:
+        raise ValueError(errors[0] if len(errors) == 1 else "; ".join(errors[:5]))
+    return added, errors
+
+
 def add_member(
     db: Session,
     event_id: int,
